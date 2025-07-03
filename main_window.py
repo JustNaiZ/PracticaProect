@@ -1,7 +1,6 @@
-# Главное окно (меню, виджет OpenGL)
-
-from PyQt5.QtWidgets import QMainWindow, QFileDialog, QMessageBox
+from PyQt5.QtWidgets import QMainWindow, QFileDialog, QMessageBox, QProgressDialog, QApplication
 from gl_widget import GLWidget
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -27,6 +26,18 @@ class MainWindow(QMainWindow):
         )
         if file_path:
             try:
-                self.gl_widget.load_image(file_path)
+                progress_dialog = QProgressDialog("Загрузка изображения...", "Отмена", 0, 100, self)
+                progress_dialog.setWindowTitle("Прогресс")
+                progress_dialog.setWindowModality(True)
+                progress_dialog.setAutoClose(True)
+                progress_dialog.setValue(0)
+
+                def progress_callback(percent):
+                    progress_dialog.setValue(percent)
+                    QApplication.processEvents()
+                    if progress_dialog.wasCanceled():
+                        raise Exception("Загрузка отменена пользователем")
+
+                self.gl_widget.load_image(file_path, progress_callback)
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить изображение:\n{str(e)}")

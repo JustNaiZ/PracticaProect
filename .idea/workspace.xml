@@ -4,15 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="9ad034f7-dba0-47a9-9603-3709f494a6c6" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/gl_widget.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/image_loader.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/main_window.py" afterDir="false" />
+    <list default="true" id="9ad034f7-dba0-47a9-9603-3709f494a6c6" name="Changes" comment="Second Cum.mit">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gui.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gl_widget.py" beforeDir="false" afterPath="$PROJECT_DIR$/gl_widget.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/main_window.py" beforeDir="false" afterPath="$PROJECT_DIR$/main_window.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tile_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/tile_manager.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tiled_raster_widget.py" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -30,6 +26,18 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "JustNaiZ"
+  }
+}]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/JustNaiZ/PracticaProect.git",
+    "accountId": "67e0255d-6cd2-4a39-b178-8481da80ebc9"
+  }
+}]]></component>
   <component name="ProblemsViewState">
     <option name="selectedTabId" value="CurrentFile" />
   </component>
@@ -125,6 +133,30 @@
       <option name="presentableId" value="Default" />
       <updated>1751463162767</updated>
     </task>
+    <task id="LOCAL-00001" summary="Second Cum.mit">
+      <option name="closed" value="true" />
+      <created>1751532548838</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1751532548838</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Second Cum.mit" />
+    <option name="LAST_COMMIT_MESSAGE" value="Second Cum.mit" />
   </component>
 </project>

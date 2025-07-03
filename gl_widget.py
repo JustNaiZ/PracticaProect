@@ -18,14 +18,19 @@ class GLWidget(QOpenGLWidget):
         self.last_pos = QPoint(0, 0)
         self.dragging = False
 
-    def load_image(self, file_path):
+    def load_image(self, file_path, progress_callback=None):
         self.image_loader.load(file_path)
-        self.tile_manager.split_into_tiles(self.image_loader.image_data, self.image_loader.width,
-                                           self.image_loader.height)
+        self.tile_manager.split_into_tiles(
+            self.image_loader.image_data,
+            self.image_loader.width,
+            self.image_loader.height,
+            progress_callback
+        )
         self.update()
 
+
     def initializeGL(self):
-        glClearColor(0.3, 0.3, 0.3, 1.0)
+        glClearColor(0.2, 0.2, 0.2, 1.0)
         glEnable(GL_TEXTURE_2D)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
