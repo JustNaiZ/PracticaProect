@@ -1,52 +1,56 @@
-from PIL import Image
+# Разбиение изображения на тайлы (части)
+
 from OpenGL.GL import *
-Image.MAX_IMAGE_PIXELS = None
-
-TILE_SIZE = 1024
-
 class Tile:
-    def __init__(self, x, y, image):
+    def __init__(self, x, y, width, height, texture_id):
         self.x = x
         self.y = y
-        self.image = image  # PIL.Image
-        self.texture_id = None
+        self.width = width
+        self.height = height
+        self.texture_id = texture_id
+
 
 class TileManager:
     def __init__(self):
         self.tiles = []
-        self.image_width = 0
-        self.image_height = 0
+        self.tile_size = 1024  # Оптимальный размер тайла (можно менять)
 
-    def load_image(self, path):
-        img = Image.open(path).convert("RGB")
-        self.image_width, self.image_height = img.size
-
-        print(f"[INFO] Загружаю и режу на тайлы: {self.image_width}x{self.image_height}")
-
+    def split_into_tiles(self, image_data, img_width, img_height):
         self.tiles.clear()
-        for y in range(0, self.image_height, TILE_SIZE):
-            for x in range(0, self.image_width, TILE_SIZE):
-                box = (x, y, min(x + TILE_SIZE, self.image_width), min(y + TILE_SIZE, self.image_height))
-                tile_img = img.crop(box)
-                self.tiles.append(Tile(x, y, tile_img))
 
-        print(f"[INFO] Всего тайлов: {len(self.tiles)}")
+        for y in range(0, img_height, self.tile_size):
+            for x in range(0, img_width, self.tile_size):
+                tile_width = min(self.tile_size, img_width - x)
+                tile_height = min(self.tile_size, img_height - y)
 
-    def generate_textures(self):
-        # Создаём текстуры для первых N тайлов, можно ограничить
-        max_tiles = 100  # лимит, чтобы не грузить все сразу
-        count = 0
-        for tile in self.tiles:
-            if count >= max_tiles:
-                break
-            if tile.texture_id is None:
-                tile.texture_id = glGenTextures(1)
-                glBindTexture(GL_TEXTURE_2D, tile.texture_id)
-                img = tile.image.transpose(Image.FLIP_TOP_BOTTOM)
-                img_bytes = img.tobytes()
-                width, height = tile.image.size
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0,
-                             GL_RGB, GL_UNSIGNED_BYTE, img_bytes)
+                # Вырезаем тайл из изображения
+                tile_data = image_data[y:y + tile_height, x:x + tile_width]
+
+                # Создаем текстуру OpenGL
+                texture_id = glGenTextures(1)
+                glBindTexture(GL_TEXTURE_2D, texture_id)
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-                count += 1
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tile_width, tile_height,
+                             0, GL_RGBA, GL_UNSIGNED_BYTE, tile_data)
+
+                self.tiles.append(Tile(x, y, tile_width, tile_height, texture_id))
+
+    def get_visible_tiles(self, viewport_width, viewport_height, pan, zoom):
+        visible_tiles = []
+        for tile in self.tiles:
+            # Проверяем, попадает ли тайл в область видимости
+            tile_screen_x = tile.x * zoom + pan.x()
+            tile_screen_y = tile.y * zoom + pan.y()
+            tile_screen_width = tile.width * zoom
+            tile_screen_height = tile.height * zoom
+
+            if (tile_screen_x + tile_screen_width > 0 and
+                    tile_screen_y + tile_screen_height > 0 and
+                    tile_screen_x < viewport_width and
+                    tile_screen_y < viewport_height):
+                visible_tiles.append(tile)
+        return visible_tiles
+
+    def is_empty(self):
+        return len(self.tiles) == 0
