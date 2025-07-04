@@ -1,6 +1,8 @@
 # Разбиение изображения на тайлы (части)
 
 from OpenGL.GL import *
+from PyQt5.QtCore import QPointF
+
 class Tile:
     def __init__(self, x, y, width, height, texture_id):
         self.x = x
@@ -8,7 +10,6 @@ class Tile:
         self.width = width
         self.height = height
         self.texture_id = texture_id
-
 
 class TileManager:
     def __init__(self):
@@ -42,21 +43,48 @@ class TileManager:
                     percent = int((current_tile / total_tiles) * 100)
                     progress_callback(percent)
 
-
-    def get_visible_tiles(self, viewport_width, viewport_height, pan, zoom):
+    def get_visible_tiles(self, viewport_width, viewport_height, pan, zoom, rotation_angle=0,
+                          rotation_center=QPointF(0, 0)):
         visible_tiles = []
+
+        # Рассчитываем расширенную область видимости с учетом поворота
+        expanded_viewport = max(viewport_width, viewport_height) * 1.5
+
         for tile in self.tiles:
-            # Проверяем, попадает ли тайл в область видимости
-            tile_screen_x = tile.x * zoom + pan.x()
-            tile_screen_y = tile.y * zoom + pan.y()
+            # Центр тайла в мировых координатах
+            tile_center_x = tile.x + tile.width / 2
+            tile_center_y = tile.y + tile.height / 2
+
+            # Преобразуем координаты с учетом поворота
+            if rotation_angle != 0:
+                # Смещаем в систему координат с центром в rotation_center
+                dx = tile_center_x - rotation_center.x()
+                dy = tile_center_y - rotation_center.y()
+
+                # Поворачиваем
+                import math
+                angle_rad = math.radians(rotation_angle)
+                cos_val = math.cos(angle_rad)
+                sin_val = math.sin(angle_rad)
+                rotated_dx = dx * cos_val - dy * sin_val
+                rotated_dy = dx * sin_val + dy * cos_val
+
+                # Возвращаем в мировые координаты
+                tile_center_x = rotated_dx + rotation_center.x()
+                tile_center_y = rotated_dy + rotation_center.y()
+
+            # Проверяем, попадает ли тайл в расширенную область видимости
+            tile_screen_x = tile_center_x * zoom + pan.x() - (tile.width * zoom) / 2
+            tile_screen_y = tile_center_y * zoom + pan.y() - (tile.height * zoom) / 2
             tile_screen_width = tile.width * zoom
             tile_screen_height = tile.height * zoom
 
-            if (tile_screen_x + tile_screen_width > 0 and
-                    tile_screen_y + tile_screen_height > 0 and
-                    tile_screen_x < viewport_width and
-                    tile_screen_y < viewport_height):
+            if (tile_screen_x + tile_screen_width > -expanded_viewport and
+                    tile_screen_y + tile_screen_height > -expanded_viewport and
+                    tile_screen_x < viewport_width + expanded_viewport and
+                    tile_screen_y < viewport_height + expanded_viewport):
                 visible_tiles.append(tile)
+
         return visible_tiles
 
     def is_empty(self):
