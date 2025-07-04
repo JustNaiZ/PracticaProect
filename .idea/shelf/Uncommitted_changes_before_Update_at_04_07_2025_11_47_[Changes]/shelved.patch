@@ -1,0 +1,304 @@
+Index: gl_widget.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># Виджет OpenGL (масштабирование, перемещение)\r\n\r\nfrom PyQt5.QtWidgets import QOpenGLWidget\r\nfrom PyQt5.QtCore import Qt, QPoint\r\nfrom OpenGL.GL import *\r\nfrom OpenGL.GLU import *\r\nfrom image_loader import ImageLoader\r\nfrom tile_manager import TileManager\r\n\r\nclass GLWidget(QOpenGLWidget):\r\n    def __init__(self, parent=None):\r\n        super().__init__(parent)\r\n        self.image_loader = ImageLoader()\r\n        self.tile_manager = TileManager()\r\n\r\n        self.zoom = 1.0\r\n        self.pan = QPoint(0, 0)\r\n        self.last_pos = QPoint(0, 0)\r\n        self.dragging = False\r\n\r\n    def load_image(self, file_path, progress_callback=None):\r\n        self.image_loader.load(file_path)\r\n        self.tile_manager.split_into_tiles(\r\n            self.image_loader.image_data,\r\n            self.image_loader.width,\r\n            self.image_loader.height,\r\n            progress_callback\r\n        )\r\n        self.update()\r\n\r\n\r\n    def initializeGL(self):\r\n        glClearColor(0.2, 0.2, 0.2, 1.0)\r\n        glEnable(GL_TEXTURE_2D)\r\n        glEnable(GL_BLEND)\r\n        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)\r\n\r\n    def resizeGL(self, w, h):\r\n        glViewport(0, 0, w, h)\r\n        glMatrixMode(GL_PROJECTION)\r\n        glLoadIdentity()\r\n        gluOrtho2D(0, w, h, 0)\r\n        glMatrixMode(GL_MODELVIEW)\r\n        glLoadIdentity()\r\n\r\n    def paintGL(self):\r\n        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)\r\n        glLoadIdentity()\r\n\r\n        if not self.tile_manager.is_empty():\r\n            glPushMatrix()\r\n            glTranslatef(self.pan.x(), self.pan.y(), 0)\r\n            glScalef(self.zoom, self.zoom, 1.0)\r\n\r\n            for tile in self.tile_manager.get_visible_tiles(self.width(), self.height(), self.pan, self.zoom):\r\n                glBindTexture(GL_TEXTURE_2D, tile.texture_id)\r\n                glBegin(GL_QUADS)\r\n                glTexCoord2f(0, 0);\r\n                glVertex2f(tile.x, tile.y)\r\n                glTexCoord2f(1, 0);\r\n                glVertex2f(tile.x + tile.width, tile.y)\r\n                glTexCoord2f(1, 1);\r\n                glVertex2f(tile.x + tile.width, tile.y + tile.height)\r\n                glTexCoord2f(0, 1);\r\n                glVertex2f(tile.x, tile.y + tile.height)\r\n                glEnd()\r\n\r\n            glPopMatrix()\r\n\r\n    def wheelEvent(self, event):\r\n        zoom_factor = 1.1\r\n        if event.angleDelta().y() > 0:\r\n            self.zoom *= zoom_factor\r\n        else:\r\n            self.zoom /= zoom_factor\r\n        self.update()\r\n\r\n    def mousePressEvent(self, event):\r\n        if event.button() == Qt.LeftButton:\r\n            self.last_pos = event.pos()\r\n            self.dragging = True\r\n\r\n    def mouseMoveEvent(self, event):\r\n        if self.dragging:\r\n            delta = event.pos() - self.last_pos\r\n            self.pan += delta\r\n            self.last_pos = event.pos()\r\n            self.update()\r\n\r\n    def mouseReleaseEvent(self, event):\r\n        if event.button() == Qt.LeftButton:\r\n            self.dragging = False\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/gl_widget.py b/gl_widget.py
+--- a/gl_widget.py	(revision f201f4c2a35be23ee221f7616f1c6a3833483d9f)
++++ b/gl_widget.py	(date 1751618211458)
+@@ -1,7 +1,7 @@
+ # Виджет OpenGL (масштабирование, перемещение)
+ 
+ from PyQt5.QtWidgets import QOpenGLWidget
+-from PyQt5.QtCore import Qt, QPoint
++from PyQt5.QtCore import Qt, QPoint, QPointF
+ from OpenGL.GL import *
+ from OpenGL.GLU import *
+ from image_loader import ImageLoader
+@@ -18,6 +18,19 @@
+         self.last_pos = QPoint(0, 0)
+         self.dragging = False
+ 
++        # Добавляем переменные для поворота
++        self.rotation_angle = 0  # Угол поворота в градусах
++        self.rotation_center = QPointF(0, 0)  # Центр вращения
++
++    def set_rotation(self, angle):
++        """Установка угла поворота"""
++        self.rotation_angle = angle % 360
++        self.update()
++
++    def rotate(self, delta_angle):
++        """Относительный поворот"""
++        self.set_rotation(self.rotation_angle + delta_angle)
++
+     def load_image(self, file_path, progress_callback=None):
+         self.image_loader.load(file_path)
+         self.tile_manager.split_into_tiles(
+@@ -49,10 +62,22 @@
+ 
+         if not self.tile_manager.is_empty():
+             glPushMatrix()
+-            glTranslatef(self.pan.x(), self.pan.y(), 0)
++
++            # Перенос в центр вращения
++            glTranslatef(self.pan.x() + self.rotation_center.x(),
++                         self.pan.y() + self.rotation_center.y(), 0)
++
++            # Поворот
++            glRotatef(self.rotation_angle, 0, 0, 1)
++
++            # Масштабирование
+             glScalef(self.zoom, self.zoom, 1.0)
+ 
+-            for tile in self.tile_manager.get_visible_tiles(self.width(), self.height(), self.pan, self.zoom):
++            # Возврат к исходной позиции
++            glTranslatef(-self.rotation_center.x(), -self.rotation_center.y(), 0)
++
++            for tile in self.tile_manager.get_visible_tiles(self.width(), self.height(), self.pan,
++                    self.zoom, self.rotation_angle, self.rotation_center):
+                 glBindTexture(GL_TEXTURE_2D, tile.texture_id)
+                 glBegin(GL_QUADS)
+                 glTexCoord2f(0, 0);
+@@ -68,11 +93,32 @@
+             glPopMatrix()
+ 
+     def wheelEvent(self, event):
++        # Получаем позицию курсора относительно виджета
++        mouse_pos = event.pos()
++
++        # Преобразуем координаты курсора в координаты сцены (до масштабирования)
++        scene_pos_before = QPointF(
++            (mouse_pos.x() - self.pan.x()) / self.zoom,
++            (mouse_pos.y() - self.pan.y()) / self.zoom
++        )
++
++        # Применяем масштабирование
+         zoom_factor = 1.1
+         if event.angleDelta().y() > 0:
+             self.zoom *= zoom_factor
+         else:
+             self.zoom /= zoom_factor
++
++        # Преобразуем координаты курсора в координаты сцены после масштабирования
++        scene_pos_after = QPointF(
++            (mouse_pos.x() - self.pan.x()) / self.zoom,
++            (mouse_pos.y() - self.pan.y()) / self.zoom
++        )
++
++        # Корректируем pan для сохранения позиции курсора
++        delta = scene_pos_after - scene_pos_before
++        self.pan += QPoint(int(delta.x() * self.zoom), int(delta.y() * self.zoom))
++
+         self.update()
+ 
+     def mousePressEvent(self, event):
+Index: tile_manager.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># Разбиение изображения на тайлы (части)\r\n\r\nfrom OpenGL.GL import *\r\nclass Tile:\r\n    def __init__(self, x, y, width, height, texture_id):\r\n        self.x = x\r\n        self.y = y\r\n        self.width = width\r\n        self.height = height\r\n        self.texture_id = texture_id\r\n\r\n\r\nclass TileManager:\r\n    def __init__(self):\r\n        self.tiles = []\r\n        self.tile_size = 1024\r\n\r\n    def split_into_tiles(self, image_data, img_width, img_height, progress_callback=None):\r\n        self.tiles.clear()\r\n        total_tiles = ((img_height + self.tile_size - 1) // self.tile_size) * \\\r\n                      ((img_width + self.tile_size - 1) // self.tile_size)\r\n        current_tile = 0\r\n\r\n        for y in range(0, img_height, self.tile_size):\r\n            for x in range(0, img_width, self.tile_size):\r\n                tile_width = min(self.tile_size, img_width - x)\r\n                tile_height = min(self.tile_size, img_height - y)\r\n\r\n                tile_data = image_data[y:y + tile_height, x:x + tile_width]\r\n\r\n                texture_id = glGenTextures(1)\r\n                glBindTexture(GL_TEXTURE_2D, texture_id)\r\n                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)\r\n                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)\r\n                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tile_width, tile_height,\r\n                             0, GL_RGBA, GL_UNSIGNED_BYTE, tile_data)\r\n\r\n                self.tiles.append(Tile(x, y, tile_width, tile_height, texture_id))\r\n\r\n                current_tile += 1\r\n                if progress_callback:\r\n                    percent = int((current_tile / total_tiles) * 100)\r\n                    progress_callback(percent)\r\n\r\n\r\n    def get_visible_tiles(self, viewport_width, viewport_height, pan, zoom):\r\n        visible_tiles = []\r\n        for tile in self.tiles:\r\n            # Проверяем, попадает ли тайл в область видимости\r\n            tile_screen_x = tile.x * zoom + pan.x()\r\n            tile_screen_y = tile.y * zoom + pan.y()\r\n            tile_screen_width = tile.width * zoom\r\n            tile_screen_height = tile.height * zoom\r\n\r\n            if (tile_screen_x + tile_screen_width > 0 and\r\n                    tile_screen_y + tile_screen_height > 0 and\r\n                    tile_screen_x < viewport_width and\r\n                    tile_screen_y < viewport_height):\r\n                visible_tiles.append(tile)\r\n        return visible_tiles\r\n\r\n    def is_empty(self):\r\n        return len(self.tiles) == 0\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/tile_manager.py b/tile_manager.py
+--- a/tile_manager.py	(revision f201f4c2a35be23ee221f7616f1c6a3833483d9f)
++++ b/tile_manager.py	(date 1751618237527)
+@@ -1,6 +1,8 @@
+ # Разбиение изображения на тайлы (части)
+ 
+ from OpenGL.GL import *
++from PyQt5.QtCore import QPointF
++
+ class Tile:
+     def __init__(self, x, y, width, height, texture_id):
+         self.x = x
+@@ -9,7 +11,6 @@
+         self.height = height
+         self.texture_id = texture_id
+ 
+-
+ class TileManager:
+     def __init__(self):
+         self.tiles = []
+@@ -42,21 +43,48 @@
+                     percent = int((current_tile / total_tiles) * 100)
+                     progress_callback(percent)
+ 
+-
+-    def get_visible_tiles(self, viewport_width, viewport_height, pan, zoom):
++    def get_visible_tiles(self, viewport_width, viewport_height, pan, zoom, rotation_angle=0,
++                          rotation_center=QPointF(0, 0)):
+         visible_tiles = []
++
++        # Рассчитываем расширенную область видимости с учетом поворота
++        expanded_viewport = max(viewport_width, viewport_height) * 1.5
++
+         for tile in self.tiles:
+-            # Проверяем, попадает ли тайл в область видимости
+-            tile_screen_x = tile.x * zoom + pan.x()
+-            tile_screen_y = tile.y * zoom + pan.y()
++            # Центр тайла в мировых координатах
++            tile_center_x = tile.x + tile.width / 2
++            tile_center_y = tile.y + tile.height / 2
++
++            # Преобразуем координаты с учетом поворота
++            if rotation_angle != 0:
++                # Смещаем в систему координат с центром в rotation_center
++                dx = tile_center_x - rotation_center.x()
++                dy = tile_center_y - rotation_center.y()
++
++                # Поворачиваем
++                import math
++                angle_rad = math.radians(rotation_angle)
++                cos_val = math.cos(angle_rad)
++                sin_val = math.sin(angle_rad)
++                rotated_dx = dx * cos_val - dy * sin_val
++                rotated_dy = dx * sin_val + dy * cos_val
++
++                # Возвращаем в мировые координаты
++                tile_center_x = rotated_dx + rotation_center.x()
++                tile_center_y = rotated_dy + rotation_center.y()
++
++            # Проверяем, попадает ли тайл в расширенную область видимости
++            tile_screen_x = tile_center_x * zoom + pan.x() - (tile.width * zoom) / 2
++            tile_screen_y = tile_center_y * zoom + pan.y() - (tile.height * zoom) / 2
+             tile_screen_width = tile.width * zoom
+             tile_screen_height = tile.height * zoom
+ 
+-            if (tile_screen_x + tile_screen_width > 0 and
+-                    tile_screen_y + tile_screen_height > 0 and
+-                    tile_screen_x < viewport_width and
+-                    tile_screen_y < viewport_height):
++            if (tile_screen_x + tile_screen_width > -expanded_viewport and
++                    tile_screen_y + tile_screen_height > -expanded_viewport and
++                    tile_screen_x < viewport_width + expanded_viewport and
++                    tile_screen_y < viewport_height + expanded_viewport):
+                 visible_tiles.append(tile)
++
+         return visible_tiles
+ 
+     def is_empty(self):
+Index: image_loader.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># Загрузка изображений\r\n\r\nfrom PIL import Image\r\nimport numpy as np\r\n\r\nclass ImageLoader:\r\n    def __init__(self):\r\n        self.image_data = None\r\n        self.width = 0\r\n        self.height = 0\r\n        Image.MAX_IMAGE_PIXELS = None  # Отключаем лимит (или задаем свой)\r\n\r\n    def load(self, file_path):\r\n        try:\r\n            image = Image.open(file_path)\r\n            image = image.convert(\"RGBA\")\r\n            self.width, self.height = image.size\r\n            self.image_data = np.array(image, dtype=np.uint8)\r\n        except Exception as e:\r\n            raise ValueError(f\"Ошибка загрузки изображения: {str(e)}\")\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/image_loader.py b/image_loader.py
+--- a/image_loader.py	(revision f201f4c2a35be23ee221f7616f1c6a3833483d9f)
++++ b/image_loader.py	(date 1751618071998)
+@@ -17,4 +17,4 @@
+             self.width, self.height = image.size
+             self.image_data = np.array(image, dtype=np.uint8)
+         except Exception as e:
+-            raise ValueError(f"Ошибка загрузки изображения: {str(e)}")
++            raise ValueError(f"Ошибка загрузки изображения: {str(e)}")
+\ No newline at end of file
+Index: .idea/workspace.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project version=\"4\">\r\n  <component name=\"AutoImportSettings\">\r\n    <option name=\"autoReloadType\" value=\"SELECTIVE\" />\r\n  </component>\r\n  <component name=\"ChangeListManager\">\r\n    <list default=\"true\" id=\"9ad034f7-dba0-47a9-9603-3709f494a6c6\" name=\"Changes\" comment=\"Second Cum.mit\">\r\n      <change beforePath=\"$PROJECT_DIR$/.idea/workspace.xml\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/.idea/workspace.xml\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/gl_widget.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/gl_widget.py\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/main_window.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/main_window.py\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/tile_manager.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/tile_manager.py\" afterDir=\"false\" />\r\n    </list>\r\n    <option name=\"SHOW_DIALOG\" value=\"false\" />\r\n    <option name=\"HIGHLIGHT_CONFLICTS\" value=\"true\" />\r\n    <option name=\"HIGHLIGHT_NON_ACTIVE_CHANGELIST\" value=\"false\" />\r\n    <option name=\"LAST_RESOLUTION\" value=\"IGNORE\" />\r\n  </component>\r\n  <component name=\"FileTemplateManagerImpl\">\r\n    <option name=\"RECENT_TEMPLATES\">\r\n      <list>\r\n        <option value=\"Python Unit Test\" />\r\n        <option value=\"Python Script\" />\r\n      </list>\r\n    </option>\r\n  </component>\r\n  <component name=\"Git.Settings\">\r\n    <option name=\"RECENT_GIT_ROOT_PATH\" value=\"$PROJECT_DIR$\" />\r\n  </component>\r\n  <component name=\"GitHubPullRequestSearchHistory\"><![CDATA[{\r\n  \"lastFilter\": {\r\n    \"state\": \"OPEN\",\r\n    \"assignee\": \"JustNaiZ\"\r\n  }\r\n}]]></component>\r\n  <component name=\"GithubPullRequestsUISettings\"><![CDATA[{\r\n  \"selectedUrlAndAccountId\": {\r\n    \"url\": \"https://github.com/JustNaiZ/PracticaProect.git\",\r\n    \"accountId\": \"67e0255d-6cd2-4a39-b178-8481da80ebc9\"\r\n  }\r\n}]]></component>\r\n  <component name=\"ProblemsViewState\">\r\n    <option name=\"selectedTabId\" value=\"CurrentFile\" />\r\n  </component>\r\n  <component name=\"ProjectColorInfo\">{\r\n  &quot;associatedIndex&quot;: 1\r\n}</component>\r\n  <component name=\"ProjectId\" id=\"2zJxpm72HuwYKyQywppQaTBYoau\" />\r\n  <component name=\"ProjectLevelVcsManager\">\r\n    <ConfirmationsSetting value=\"2\" id=\"Add\" />\r\n  </component>\r\n  <component name=\"ProjectViewState\">\r\n    <option name=\"hideEmptyMiddlePackages\" value=\"true\" />\r\n    <option name=\"showLibraryContents\" value=\"true\" />\r\n  </component>\r\n  <component name=\"PropertiesComponent\"><![CDATA[{\r\n  \"keyToString\": {\r\n    \"ASKED_SHARE_PROJECT_CONFIGURATION_FILES\": \"true\",\r\n    \"ModuleVcsDetector.initialDetectionPerformed\": \"true\",\r\n    \"Python.main.executor\": \"Run\",\r\n    \"Python.opengl_test.executor\": \"Run\",\r\n    \"RunOnceActivity.ShowReadmeOnStart\": \"true\",\r\n    \"RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager\": \"true\",\r\n    \"RunOnceActivity.git.unshallow\": \"true\",\r\n    \"SHARE_PROJECT_CONFIGURATION_FILES\": \"true\",\r\n    \"git-widget-placeholder\": \"main\",\r\n    \"settings.editor.selected.configurable\": \"com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable\"\r\n  }\r\n}]]></component>\r\n  <component name=\"RunManager\" selected=\"Python.main\">\r\n    <configuration name=\"main\" type=\"PythonConfigurationType\" factoryName=\"Python\" temporary=\"true\" nameIsGenerated=\"true\">\r\n      <module name=\"PythonProject\" />\r\n      <option name=\"ENV_FILES\" value=\"\" />\r\n      <option name=\"INTERPRETER_OPTIONS\" value=\"\" />\r\n      <option name=\"PARENT_ENVS\" value=\"true\" />\r\n      <envs>\r\n        <env name=\"PYTHONUNBUFFERED\" value=\"1\" />\r\n      </envs>\r\n      <option name=\"SDK_HOME\" value=\"\" />\r\n      <option name=\"WORKING_DIRECTORY\" value=\"$PROJECT_DIR$\" />\r\n      <option name=\"IS_MODULE_SDK\" value=\"true\" />\r\n      <option name=\"ADD_CONTENT_ROOTS\" value=\"true\" />\r\n      <option name=\"ADD_SOURCE_ROOTS\" value=\"true\" />\r\n      <option name=\"SCRIPT_NAME\" value=\"$PROJECT_DIR$/main.py\" />\r\n      <option name=\"PARAMETERS\" value=\"\" />\r\n      <option name=\"SHOW_COMMAND_LINE\" value=\"false\" />\r\n      <option name=\"EMULATE_TERMINAL\" value=\"false\" />\r\n      <option name=\"MODULE_MODE\" value=\"false\" />\r\n      <option name=\"REDIRECT_INPUT\" value=\"false\" />\r\n      <option name=\"INPUT_FILE\" value=\"\" />\r\n      <method v=\"2\" />\r\n    </configuration>\r\n    <configuration name=\"opengl_test\" type=\"PythonConfigurationType\" factoryName=\"Python\" temporary=\"true\" nameIsGenerated=\"true\">\r\n      <module name=\"PythonProject\" />\r\n      <option name=\"ENV_FILES\" value=\"\" />\r\n      <option name=\"INTERPRETER_OPTIONS\" value=\"\" />\r\n      <option name=\"PARENT_ENVS\" value=\"true\" />\r\n      <envs>\r\n        <env name=\"PYTHONUNBUFFERED\" value=\"1\" />\r\n      </envs>\r\n      <option name=\"SDK_HOME\" value=\"\" />\r\n      <option name=\"WORKING_DIRECTORY\" value=\"$PROJECT_DIR$\" />\r\n      <option name=\"IS_MODULE_SDK\" value=\"true\" />\r\n      <option name=\"ADD_CONTENT_ROOTS\" value=\"true\" />\r\n      <option name=\"ADD_SOURCE_ROOTS\" value=\"true\" />\r\n      <option name=\"SCRIPT_NAME\" value=\"$PROJECT_DIR$/opengl_test.py\" />\r\n      <option name=\"PARAMETERS\" value=\"\" />\r\n      <option name=\"SHOW_COMMAND_LINE\" value=\"false\" />\r\n      <option name=\"EMULATE_TERMINAL\" value=\"false\" />\r\n      <option name=\"MODULE_MODE\" value=\"false\" />\r\n      <option name=\"REDIRECT_INPUT\" value=\"false\" />\r\n      <option name=\"INPUT_FILE\" value=\"\" />\r\n      <method v=\"2\" />\r\n    </configuration>\r\n    <recent_temporary>\r\n      <list>\r\n        <item itemvalue=\"Python.main\" />\r\n        <item itemvalue=\"Python.opengl_test\" />\r\n      </list>\r\n    </recent_temporary>\r\n  </component>\r\n  <component name=\"SharedIndexes\">\r\n    <attachedChunks>\r\n      <set>\r\n        <option value=\"bundled-python-sdk-53e2683a6804-9cdd278e9d02-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-251.26094.141\" />\r\n      </set>\r\n    </attachedChunks>\r\n  </component>\r\n  <component name=\"TaskManager\">\r\n    <task active=\"true\" id=\"Default\" summary=\"Default task\">\r\n      <changelist id=\"9ad034f7-dba0-47a9-9603-3709f494a6c6\" name=\"Changes\" comment=\"\" />\r\n      <created>1751463162767</created>\r\n      <option name=\"number\" value=\"Default\" />\r\n      <option name=\"presentableId\" value=\"Default\" />\r\n      <updated>1751463162767</updated>\r\n    </task>\r\n    <task id=\"LOCAL-00001\" summary=\"Second Cum.mit\">\r\n      <option name=\"closed\" value=\"true\" />\r\n      <created>1751532548838</created>\r\n      <option name=\"number\" value=\"00001\" />\r\n      <option name=\"presentableId\" value=\"LOCAL-00001\" />\r\n      <option name=\"project\" value=\"LOCAL\" />\r\n      <updated>1751532548838</updated>\r\n    </task>\r\n    <option name=\"localTasksCounter\" value=\"2\" />\r\n    <servers />\r\n  </component>\r\n  <component name=\"Vcs.Log.Tabs.Properties\">\r\n    <option name=\"TAB_STATES\">\r\n      <map>\r\n        <entry key=\"MAIN\">\r\n          <value>\r\n            <State />\r\n          </value>\r\n        </entry>\r\n      </map>\r\n    </option>\r\n  </component>\r\n  <component name=\"VcsManagerConfiguration\">\r\n    <MESSAGE value=\"Second Cum.mit\" />\r\n    <option name=\"LAST_COMMIT_MESSAGE\" value=\"Second Cum.mit\" />\r\n  </component>\r\n</project>
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.idea/workspace.xml b/.idea/workspace.xml
+--- a/.idea/workspace.xml	(revision f201f4c2a35be23ee221f7616f1c6a3833483d9f)
++++ b/.idea/workspace.xml	(date 1751618390688)
+@@ -4,10 +4,10 @@
+     <option name="autoReloadType" value="SELECTIVE" />
+   </component>
+   <component name="ChangeListManager">
+-    <list default="true" id="9ad034f7-dba0-47a9-9603-3709f494a6c6" name="Changes" comment="Second Cum.mit">
++    <list default="true" id="9ad034f7-dba0-47a9-9603-3709f494a6c6" name="Changes" comment="Three Cummit">
+       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+       <change beforePath="$PROJECT_DIR$/gl_widget.py" beforeDir="false" afterPath="$PROJECT_DIR$/gl_widget.py" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/main_window.py" beforeDir="false" afterPath="$PROJECT_DIR$/main_window.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/image_loader.py" beforeDir="false" afterPath="$PROJECT_DIR$/image_loader.py" afterDir="false" />
+       <change beforePath="$PROJECT_DIR$/tile_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/tile_manager.py" afterDir="false" />
+     </list>
+     <option name="SHOW_DIALOG" value="false" />
+@@ -26,18 +26,18 @@
+   <component name="Git.Settings">
+     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+   </component>
+-  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+-  "lastFilter": {
+-    "state": "OPEN",
+-    "assignee": "JustNaiZ"
++  <component name="GitHubPullRequestSearchHistory">{
++  &quot;lastFilter&quot;: {
++    &quot;state&quot;: &quot;OPEN&quot;,
++    &quot;assignee&quot;: &quot;JustNaiZ&quot;
+   }
+-}]]></component>
+-  <component name="GithubPullRequestsUISettings"><![CDATA[{
+-  "selectedUrlAndAccountId": {
+-    "url": "https://github.com/JustNaiZ/PracticaProect.git",
+-    "accountId": "67e0255d-6cd2-4a39-b178-8481da80ebc9"
++}</component>
++  <component name="GithubPullRequestsUISettings">{
++  &quot;selectedUrlAndAccountId&quot;: {
++    &quot;url&quot;: &quot;https://github.com/JustNaiZ/PracticaProect.git&quot;,
++    &quot;accountId&quot;: &quot;67e0255d-6cd2-4a39-b178-8481da80ebc9&quot;
+   }
+-}]]></component>
++}</component>
+   <component name="ProblemsViewState">
+     <option name="selectedTabId" value="CurrentFile" />
+   </component>
+@@ -63,6 +63,7 @@
+     "RunOnceActivity.git.unshallow": "true",
+     "SHARE_PROJECT_CONFIGURATION_FILES": "true",
+     "git-widget-placeholder": "main",
++    "ignore.virus.scanning.warn.message": "true",
+     "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
+   }
+ }]]></component>
+@@ -141,7 +142,15 @@
+       <option name="project" value="LOCAL" />
+       <updated>1751532548838</updated>
+     </task>
+-    <option name="localTasksCounter" value="2" />
++    <task id="LOCAL-00002" summary="Three Cummit">
++      <option name="closed" value="true" />
++      <created>1751533943464</created>
++      <option name="number" value="00002" />
++      <option name="presentableId" value="LOCAL-00002" />
++      <option name="project" value="LOCAL" />
++      <updated>1751533943464</updated>
++    </task>
++    <option name="localTasksCounter" value="3" />
+     <servers />
+   </component>
+   <component name="Vcs.Log.Tabs.Properties">
+@@ -157,6 +166,7 @@
+   </component>
+   <component name="VcsManagerConfiguration">
+     <MESSAGE value="Second Cum.mit" />
+-    <option name="LAST_COMMIT_MESSAGE" value="Second Cum.mit" />
++    <MESSAGE value="Three Cummit" />
++    <option name="LAST_COMMIT_MESSAGE" value="Three Cummit" />
+   </component>
+ </project>
+\ No newline at end of file
+Index: .idea/vcs.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project version=\"4\">\r\n  <component name=\"VcsDirectoryMappings\">\r\n    <mapping directory=\"$PROJECT_DIR$\" vcs=\"Git\" />\r\n  </component>\r\n</project>
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.idea/vcs.xml b/.idea/vcs.xml
+--- a/.idea/vcs.xml	(revision f201f4c2a35be23ee221f7616f1c6a3833483d9f)
++++ b/.idea/vcs.xml	(date 1751618674031)
+@@ -2,5 +2,6 @@
+ <project version="4">
+   <component name="VcsDirectoryMappings">
+     <mapping directory="$PROJECT_DIR$" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/PracticaProect" vcs="Git" />
+   </component>
+ </project>
+\ No newline at end of file
