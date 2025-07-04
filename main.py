@@ -1,4 +1,4 @@
-# Запуск приложения
+# Запуск приложенuя
 
 import sys
 from PyQt5.QtWidgets import QApplication, QDesktopWidget

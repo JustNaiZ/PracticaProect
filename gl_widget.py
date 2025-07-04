@@ -6,6 +6,7 @@ from image_loader import ImageLoader
 from tile_manager import TileManager
 import numpy as np
 
+#тут много чего добавил
 
 class RasterObject:
     def __init__(self, tile_manager, position=QPointF(0, 0), size=QSizeF(100, 100)):

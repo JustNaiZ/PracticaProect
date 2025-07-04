@@ -1,4 +1,4 @@
-# Загрузка изображений
+# Загрузка изображенuй
 
 from PIL import Image
 import numpy as np

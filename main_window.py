@@ -1,7 +1,7 @@
-from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QPushButton, QFileDialog, QProgressDialog,
                              QMessageBox, QApplication, QLabel, QFrame)
+
 from gl_widget import GLWidget
 
 

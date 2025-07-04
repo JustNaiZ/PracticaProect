@@ -1,4 +1,4 @@
-# Разбиение изображения на тайлы (части)
+# Разбиение изобрaжения на тайлы (части)
 
 from OpenGL.GL import *
 from PyQt5.QtCore import QPointF
