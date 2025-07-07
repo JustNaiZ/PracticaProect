@@ -1,3 +1,5 @@
+# Виджет OpenGL (масштабирование, перемещение)
+
 from PyQt5.QtWidgets import QOpenGLWidget
 from PyQt5.QtCore import Qt, QPoint, QPointF, QSizeF, pyqtSignal, QTimer
 from OpenGL.GL import *
@@ -5,8 +7,6 @@ from OpenGL.GLU import *
 from image_loader import ImageLoader
 from tile_manager import TileManager
 import numpy as np
-
-#тут много чего добавил
 
 class RasterObject:
     def __init__(self, tile_manager, position=QPointF(0, 0), size=QSizeF(100, 100)):
@@ -79,8 +79,60 @@ class GLWidget(QOpenGLWidget):
             self.hovered_object = None
         self.update()
 
+    def add_image(self, file_path, progress_callback=None):
+        try:
+            # Создаем новый загрузчик и менеджер тайлов
+            new_loader = ImageLoader()
+            new_loader.load(file_path)
+
+            new_tile_manager = TileManager()
+            new_tile_manager.split_into_tiles(
+                new_loader.image_data,
+                new_loader.width,
+                new_loader.height,
+                progress_callback
+            )
+
+            img_w = new_loader.width
+            img_h = new_loader.height
+
+            # Позиционируем новое изображение с небольшим смещением от предыдущего
+            if self.raster_objects:
+                last_pos = self.raster_objects[-1].position
+                new_pos = QPointF(last_pos.x() + 20, last_pos.y() + 20)  # Смещение 20 пикселей
+            else:
+                new_pos = QPointF(0, 0)  # Для первого изображения
+
+            # Создаем объект растра с теми же параметрами центра, что и в load_image()
+            obj = RasterObject(
+                new_tile_manager,
+                new_pos,
+                QSizeF(img_w, img_h)
+            )
+            obj.rotation_center = QPointF(img_w / 2, img_h / 2)  # Центр как в load_image()
+
+            self.raster_objects.append(obj)
+
+            # Если это первое изображение, центрируем камеру
+            if len(self.raster_objects) == 1:
+                QTimer.singleShot(0, self.center_camera_on_raster)
+
+            self.update()
+            return True
+
+        except Exception as e:
+            print(f"Ошибка при добавлении изображения: {str(e)}")
+            return False
+
     def load_image(self, file_path, progress_callback=None):
+        # Очищаем предыдущие изображения
+        self.clear_rasters()
+
+        # Создаем новый загрузчик и менеджер тайлов
+        self.image_loader = ImageLoader()
         self.image_loader.load(file_path)
+
+        self.tile_manager = TileManager()
         self.tile_manager.split_into_tiles(
             self.image_loader.image_data,
             self.image_loader.width,
@@ -106,6 +158,12 @@ class GLWidget(QOpenGLWidget):
 
         self.raster_objects.append(obj)
         QTimer.singleShot(0, self.center_camera_on_raster)
+        self.update()
+
+    def clear_rasters(self):
+        self.raster_objects = []
+        self.active_object = None
+        self.hovered_object = None
         self.update()
 
     def rotate(self, angle):
@@ -292,5 +350,3 @@ class GLWidget(QOpenGLWidget):
 
         # print(f"[DEBUG] zoom={self.zoom:.4f}, pan={self.pan}")
         self.update()
-
-

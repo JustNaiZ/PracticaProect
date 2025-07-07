@@ -1,9 +1,10 @@
+# Главное окно приложения
+
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QPushButton, QFileDialog, QProgressDialog,
                              QMessageBox, QApplication, QLabel, QFrame)
 
 from gl_widget import GLWidget
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -22,6 +23,8 @@ class MainWindow(QMainWindow):
         self.mode_panel.setVisible(False)
         self.selection_panel.setVisible(False)
         self.tool_panel.setVisible(False)
+
+        self.add_action = None  # Добавляем инициализацию атрибута
 
         # Позиционируем панели поверх gl_widget, не используя layout для них
         self._position_panels()
@@ -46,6 +49,10 @@ class MainWindow(QMainWindow):
         file_menu = menubar.addMenu("Файл")
         open_action = file_menu.addAction("Открыть изображение")
         open_action.triggered.connect(self._open_image)
+
+        self.add_action = file_menu.addAction("Добавить изображение")
+        self.add_action.setVisible(False)
+        self.add_action.triggered.connect(self._add_image)
 
     def _create_mode_panel(self):
         panel = QWidget(self)
@@ -195,6 +202,30 @@ class MainWindow(QMainWindow):
     def _on_object_activated(self, active):
         self.tool_panel.setVisible(active)
 
+    def _add_image(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Добавить изображение", "",
+            "Images (*.bmp *.tif *.tiff *.png *.jpg *.jpeg)"
+        )
+        if file_path:
+            try:
+                progress_dialog = QProgressDialog("Добавление изображения...", "Отмена", 0, 100, self)
+                progress_dialog.setWindowTitle("Прогресс")
+                progress_dialog.setWindowModality(True)
+                progress_dialog.setAutoClose(True)
+                progress_dialog.setValue(0)
+
+                def progress_callback(percent):
+                    progress_dialog.setValue(percent)
+                    QApplication.processEvents()
+                    if progress_dialog.wasCanceled():
+                        raise Exception("Добавление отменено пользователем")
+
+                self.gl_widget.add_image(file_path, progress_callback)
+
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка", f"Не удалось добавить изображение:\n{str(e)}")
+
     def _open_image(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Открыть изображение", "",
@@ -216,6 +247,7 @@ class MainWindow(QMainWindow):
 
                 self.gl_widget.load_image(file_path, progress_callback)
 
+                self.add_action.setVisible(True)
                 self.mode_panel.setVisible(True)
                 self._activate_move_mode()
 
