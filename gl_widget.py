@@ -77,6 +77,10 @@ class GLWidget(QOpenGLWidget):
         self.selection_mode = enabled
         if not enabled:
             self.hovered_object = None
+            if self.active_object:
+                self.active_object.is_active = False
+                self.active_object = None
+                self.objectActivated.emit(False)
         self.update()
 
     def add_image(self, file_path, progress_callback=None):
@@ -238,7 +242,7 @@ class GLWidget(QOpenGLWidget):
             glPopMatrix()
 
     def mouseDoubleClickEvent(self, event):
-        if not self.mode_move and event.button() == Qt.LeftButton:
+        if not self.mode_move and self.selection_mode and event.button() == Qt.LeftButton:
             scene_pos = self.map_to_scene(event.pos())
             for obj in reversed(self.raster_objects):
                 if obj.contains_point(scene_pos):
@@ -267,14 +271,13 @@ class GLWidget(QOpenGLWidget):
     def mouseMoveEvent(self, event):
         scene_pos = self.map_to_scene(event.pos())
 
-        if not self.mode_move:
-            # Обновляем hovered объект только в режиме работы с растром
+        if not self.mode_move and self.selection_mode:
+            # Обновляем hovered объект только в режиме работы с растром и при включенном выделении
             new_hovered = None
-            if self.selection_mode:
-                for obj in reversed(self.raster_objects):
-                    if obj.contains_point(scene_pos):
-                        new_hovered = obj
-                        break
+            for obj in reversed(self.raster_objects):
+                if obj.contains_point(scene_pos):
+                    new_hovered = obj
+                    break
 
             if new_hovered != self.hovered_object:
                 self.hovered_object = new_hovered
@@ -283,11 +286,9 @@ class GLWidget(QOpenGLWidget):
         if self.dragging:
             delta = event.pos() - self.last_pos
             if self.mode_move:
-                # Панорамирование сцены
                 self.pan += delta
             else:
-                # Перемещение активного объекта
-                if self.active_object:
+                if self.active_object and self.selection_mode:  # Добавили проверку selection_mode
                     self.active_object.position += QPointF(delta.x() / self.zoom, delta.y() / self.zoom)
             self.last_pos = event.pos()
             self.update()

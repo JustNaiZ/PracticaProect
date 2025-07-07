@@ -104,10 +104,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(line)
 
         self.select_raster_btn = QPushButton("Выделить растр")
+        self.select_raster_btn.setCheckable(True)  # Делаем кнопку переключаемой
         layout.addWidget(self.select_raster_btn)
 
         return panel
 
+    # В методе _create_tool_panel() добавим новые кнопки:
     def _create_tool_panel(self):
         panel = QWidget(self)
         panel.setStyleSheet(self._panel_style())
@@ -177,10 +179,9 @@ class MainWindow(QMainWindow):
         self.move_mode_btn.setEnabled(False)
         self.raster_mode_btn.setEnabled(True)
 
-        self.selection_panel.setVisible(False)
-        self.tool_panel.setVisible(False)
-
         self.gl_widget.set_mode_move(True)
+        self.gl_widget.set_selection_enabled(False)  # Отключаем выделение
+        self.select_raster_btn.setChecked(False)  # Сбрасываем состояние кнопки
 
     def _activate_raster_mode(self):
         self.move_mode_btn.setChecked(False)
@@ -196,8 +197,7 @@ class MainWindow(QMainWindow):
         self.gl_widget.center_camera_on_raster()
 
     def _enable_raster_selection(self):
-        self.select_raster_btn.setEnabled(False)
-        self.gl_widget.set_selection_enabled(True)
+        self.gl_widget.set_selection_enabled(self.select_raster_btn.isChecked())
 
     def _on_object_activated(self, active):
         self.tool_panel.setVisible(active)
