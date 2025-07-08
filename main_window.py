@@ -1,8 +1,9 @@
 # Главное окно приложения
-
+from PyQt5.QtGui import QDoubleValidator
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QPushButton, QFileDialog, QProgressDialog,
-                             QMessageBox, QApplication, QLabel, QFrame)
+                             QMessageBox, QApplication, QLabel, QFrame, QDialog,
+                             QDialogButtonBox, QDoubleSpinBox)
 
 from gl_widget import GLWidget
 
@@ -109,7 +110,6 @@ class MainWindow(QMainWindow):
 
         return panel
 
-    # В методе _create_tool_panel() добавим новые кнопки:
     def _create_tool_panel(self):
         panel = QWidget(self)
         panel.setStyleSheet(self._panel_style())
@@ -136,8 +136,8 @@ class MainWindow(QMainWindow):
         self.rotate_right_btn = QPushButton("↻ 90°")
         buttons_layout.addWidget(self.rotate_right_btn)
 
-        self.rotate_180_btn = QPushButton("180°")
-        buttons_layout.addWidget(self.rotate_180_btn)
+        self.rotate_custom_btn = QPushButton("Ввести угол")
+        buttons_layout.addWidget(self.rotate_custom_btn)
 
         layout.addLayout(buttons_layout)
 
@@ -171,7 +171,55 @@ class MainWindow(QMainWindow):
 
         self.rotate_left_btn.clicked.connect(lambda: self.gl_widget.rotate(-90))
         self.rotate_right_btn.clicked.connect(lambda: self.gl_widget.rotate(90))
-        self.rotate_180_btn.clicked.connect(lambda: self.gl_widget.rotate(180))
+        self.rotate_custom_btn.clicked.connect(self._show_angle_dialog)
+
+    def _show_angle_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Точный поворот")
+        dialog.setFixedSize(300, 150)
+
+        layout = QVBoxLayout(dialog)
+
+        # Создаем контейнер для ввода угла
+        angle_layout = QHBoxLayout()
+        angle_label = QLabel("Угол (°):")
+        angle_layout.addWidget(angle_label)
+
+        self.angle_spin = QDoubleSpinBox()
+        self.angle_spin.setRange(-360.0, 360.0)
+        self.angle_spin.setDecimals(2)  # Две цифры после запятой
+        self.angle_spin.setValue(0.0)
+        self.angle_spin.setSingleStep(0.01)  # Шаг изменения 0.01
+        angle_layout.addWidget(self.angle_spin)
+
+        # Кнопки для быстрого изменения сотых долей
+        btn_layout = QVBoxLayout()
+        up_btn = QPushButton("▲")
+        up_btn.setFixedWidth(1)
+        up_btn.clicked.connect(lambda: self.angle_spin.setValue(
+            round(self.angle_spin.value() + 0.01, 2)))
+        down_btn = QPushButton("▼")
+        down_btn.setFixedWidth(1)
+        down_btn.clicked.connect(lambda: self.angle_spin.setValue(
+            round(self.angle_spin.value() - 0.01, 2)))
+        btn_layout.addWidget(up_btn)
+        btn_layout.addWidget(down_btn)
+        angle_layout.addLayout(btn_layout)
+
+        layout.addLayout(angle_layout)
+
+        # Кнопки подтверждения/отмены
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(lambda: self._apply_rotation(dialog))
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        dialog.exec_()
+
+    def _apply_rotation(self, dialog):
+        angle = self.angle_spin.value()
+        self.gl_widget.rotate(angle)
+        dialog.accept()
 
     def _activate_move_mode(self):
         self.raster_mode_btn.setChecked(False)
