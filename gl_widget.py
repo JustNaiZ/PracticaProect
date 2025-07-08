@@ -70,7 +70,7 @@ class GLWidget(QOpenGLWidget):
             self.hovered_object = None
         else:
             self.selection_mode = True
-            self.center_camera_on_raster()  # Центрирование при входе в режим работы с растром
+            # self.center_camera_on_raster() - оставляем там, где пользователь изволит
         self.update()
 
     def set_selection_enabled(self, enabled: bool):

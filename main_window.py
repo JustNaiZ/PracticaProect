@@ -183,6 +183,8 @@ class MainWindow(QMainWindow):
         self.gl_widget.set_selection_enabled(False)  # Отключаем выделение
         self.select_raster_btn.setChecked(False)  # Сбрасываем состояние кнопки
 
+        self.selection_panel.setVisible(False)
+
     def _activate_raster_mode(self):
         self.move_mode_btn.setChecked(False)
         self.raster_mode_btn.setChecked(True)
@@ -194,7 +196,7 @@ class MainWindow(QMainWindow):
 
         self.gl_widget.set_mode_move(False)
         self.gl_widget.set_selection_enabled(False)
-        self.gl_widget.center_camera_on_raster()
+        # self.gl_widget.center_camera_on_raster() - оставляем там, где пользователь изволит
 
     def _enable_raster_selection(self):
         self.gl_widget.set_selection_enabled(self.select_raster_btn.isChecked())
