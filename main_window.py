@@ -1,5 +1,5 @@
 # Главное окно приложения
-from PyQt5.QtGui import QDoubleValidator
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QPushButton, QFileDialog, QProgressDialog,
                              QMessageBox, QApplication, QLabel, QFrame, QDialog,
@@ -253,53 +253,165 @@ class MainWindow(QMainWindow):
         self.tool_panel.setVisible(active)
 
     def _add_image(self):
+        """Добавление нового изображения к текущей сцене"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Добавить изображение", "",
+            self,
+            "Добавить изображение",
+            "",
             "Images (*.bmp *.tif *.tiff *.png *.jpg *.jpeg)"
         )
-        if file_path:
-            try:
-                progress_dialog = QProgressDialog("Добавление изображения...", "Отмена", 0, 100, self)
-                progress_dialog.setWindowTitle("Прогресс")
-                progress_dialog.setWindowModality(True)
-                progress_dialog.setAutoClose(True)
-                progress_dialog.setValue(0)
 
-                def progress_callback(percent):
-                    progress_dialog.setValue(percent)
-                    QApplication.processEvents()
-                    if progress_dialog.wasCanceled():
-                        raise Exception("Добавление отменено пользователем")
+        if not file_path:
+            return
 
-                self.gl_widget.add_image(file_path, progress_callback)
+        try:
+            # Закрываем предыдущие уведомления перед операцией
+            if hasattr(self, '_current_toast'):
+                try:
+                    self._current_toast.hide()
+                except RuntimeError:
+                    pass  # Игнорируем ошибки удаленного объекта
 
-            except Exception as e:
-                QMessageBox.critical(self, "Ошибка", f"Не удалось добавить изображение:\n{str(e)}")
+            # Добавляем изображение
+            success = self.gl_widget.add_image(file_path, self._progress_callback)
+
+            if success:
+                # Формируем сообщение после успешного добавления
+                try:
+                    last_obj = self.gl_widget.raster_objects[-1]
+                    self.show_toast(
+                        f"Добавлено изображение: {file_path.split('/')[-1]}\n"
+                        f"Размер: {last_obj.size.width():.0f}×{last_obj.size.height():.0f} px\n"
+                        f"Физический размер: "
+                        f"{last_obj.get_physical_size_mm().width():.1f}×"
+                        f"{last_obj.get_physical_size_mm().height():.1f} мм"
+                    )
+                except (IndexError, AttributeError, RuntimeError) as e:
+                    print(f"Ошибка при показе уведомления: {str(e)}")
+
+        except Exception as e:
+            # Сначала скрываем прогресс-диалог, если он есть
+            if hasattr(self, '_progress_dialog'):
+                try:
+                    self._progress_dialog.hide()
+                except RuntimeError:
+                    pass
+
+            QMessageBox.critical( self, "Ошибка", f"Не удалось добавить изображение:\n{str(e)}")
 
     def _open_image(self):
+        """Загрузка нового изображения (очищает предыдущее)"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Открыть изображение", "",
+            self,
+            "Открыть изображение",
+            "",
             "Images (*.bmp *.tif *.tiff *.png *.jpg *.jpeg)"
         )
-        if file_path:
+
+        if not file_path:
+            return
+
+        try:
+            # Закрываем предыдущие уведомления
+            if hasattr(self, '_current_toast'):
+                try:
+                    self._current_toast.hide()
+                except RuntimeError:
+                    pass
+
+            # Загружаем изображение
+            self.gl_widget.load_image(file_path, self._progress_callback)
+
+            # Формируем информационное сообщение
             try:
-                progress_dialog = QProgressDialog("Загрузка изображения...", "Отмена", 0, 100, self)
-                progress_dialog.setWindowTitle("Прогресс")
-                progress_dialog.setWindowModality(True)
-                progress_dialog.setAutoClose(True)
-                progress_dialog.setValue(0)
+                img_info = (
+                    f"Загружено изображение: {file_path.split('/')[-1]}\n"
+                    f"Размер: {self.gl_widget.image_loader.width}×{self.gl_widget.image_loader.height} px\n"
+                    f"Физический размер: "
+                    f"{self.gl_widget.raster_objects[0].get_physical_size_mm().width():.1f}×"
+                    f"{self.gl_widget.raster_objects[0].get_physical_size_mm().height():.1f} мм"
+                )
+                self.show_toast(img_info, timeout=5000)  # Увеличиваем время показа
+            except (IndexError, AttributeError, RuntimeError) as e:
+                print(f"Ошибка при формировании информации: {str(e)}")
 
-                def progress_callback(percent):
-                    progress_dialog.setValue(percent)
-                    QApplication.processEvents()
-                    if progress_dialog.wasCanceled():
-                        raise Exception("Загрузка отменена пользователем")
+            # Активируем интерфейс
+            self.add_action.setVisible(True)
+            self.mode_panel.setVisible(True)
+            self._activate_move_mode()
 
-                self.gl_widget.load_image(file_path, progress_callback)
+        except Exception as e:
+            # Скрываем прогресс-диалог при ошибке
+            if hasattr(self, '_progress_dialog'):
+                try:
+                    self._progress_dialog.hide()
+                except RuntimeError:
+                    pass
 
-                self.add_action.setVisible(True)
-                self.mode_panel.setVisible(True)
-                self._activate_move_mode()
+            QMessageBox.critical( self, "Ошибка", f"Не удалось загрузить изображение:\n{str(e)}")
 
-            except Exception as e:
-                QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить изображение:\n{str(e)}")
+    def _progress_callback(self, percent):
+        """Обработчик прогресса операций загрузки"""
+        # Инициализация диалога только при начале операции (percent == 0)
+        if percent == 0:
+            if hasattr(self, '_progress_dialog'):
+                self._progress_dialog.deleteLater()
+
+            self._progress_dialog = QProgressDialog("Обработка изображения...", "Отмена", 0, 100, self)
+            self._progress_dialog.setWindowTitle("Прогресс")
+            self._progress_dialog.setWindowModality(True)
+            self._progress_dialog.setAutoClose(True)  # Автоматически закрывать при завершении
+            self._progress_dialog.show()
+
+        # Обновляем прогресс только если диалог существует
+        if hasattr(self, '_progress_dialog'):
+            self._progress_dialog.setValue(percent)
+            QApplication.processEvents()
+
+            if self._progress_dialog.wasCanceled():
+                self._progress_dialog.deleteLater()
+                del self._progress_dialog
+                raise Exception("Операция отменена пользователем")
+
+    def show_toast(self, message, timeout=7000):
+        """Всплывающее уведомление с автоисчезновением"""
+        # Удаляем предыдущее уведомление безопасным способом
+        if hasattr(self, '_current_toast'):
+            try:
+                if self._current_toast:
+                    self._current_toast.deleteLater()
+            except RuntimeError:
+                pass  # Объект уже был удален
+
+        # Создаем новое уведомление
+        self._current_toast = QLabel(message, self)
+        self._current_toast.setObjectName("ToastNotification")
+        self._current_toast.setStyleSheet("""
+            QLabel#ToastNotification {
+                background: rgba(50, 50, 50, 220);
+                color: white;
+                padding: 10px 15px;
+                border-radius: 5px;
+                font: 12px;
+                border: 1px solid #444;
+            }
+        """)
+        self._current_toast.setAlignment(Qt.AlignCenter)
+        self._current_toast.adjustSize()
+
+        # Позиционируем
+        x = (self.width() - self._current_toast.width()) // 2
+        y = self.height() - self._current_toast.height() - 30
+        self._current_toast.move(x, y)
+        self._current_toast.show()
+
+        # Автоудаление с проверкой
+        def safe_delete():
+            if hasattr(self, '_current_toast'):
+                try:
+                    self._current_toast.deleteLater()
+                    del self._current_toast
+                except RuntimeError:
+                    pass
+
+        QTimer.singleShot(timeout, safe_delete) # Удаление через timeout миллисекунд

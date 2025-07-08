@@ -1,5 +1,6 @@
 # Виджет OpenGL (масштабирование, перемещение)
 
+import os
 from PyQt5.QtWidgets import QOpenGLWidget
 from PyQt5.QtCore import Qt, QPoint, QPointF, QSizeF, pyqtSignal, QTimer
 from OpenGL.GL import *
@@ -9,7 +10,7 @@ from tile_manager import TileManager
 import numpy as np
 
 class RasterObject:
-    def __init__(self, tile_manager, position=QPointF(0, 0), size=QSizeF(100, 100)):
+    def __init__(self, tile_manager, position=QPointF(0, 0), size=QSizeF(100, 100), file_path=""):
         self.tile_manager = tile_manager
         self.position = position
         self.size = size
@@ -18,6 +19,14 @@ class RasterObject:
         self.is_active = False
         self.rotation_angle = 0
         self.rotation_center = QPointF(size.width() / 2, size.height() / 2)
+        self.dpi = (600, 600)
+        self.file_path = file_path  # Сохраняем путь к файлу
+
+    def get_physical_size_mm(self): # Просто для вывода размеров изображения
+        return QSizeF(
+            self.size.width() * 25.4 / self.dpi[0],
+            self.size.height() * 25.4 / self.dpi[1]
+        )
 
     def contains_point(self, point):
         # Проверка попадания точки с учетом поворота
@@ -85,10 +94,15 @@ class GLWidget(QOpenGLWidget):
 
     def add_image(self, file_path, progress_callback=None):
         try:
-            # Создаем новый загрузчик и менеджер тайлов
-            new_loader = ImageLoader()
-            new_loader.load(file_path)
+            # Проверка существования файла
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"Файл не найден: {file_path}")
 
+            # Загрузка с автоматическим приведением к 600 DPI
+            new_loader = ImageLoader()
+            new_loader.load(file_path, target_dpi=600)
+
+            # Создание тайлов с обработкой прогресса
             new_tile_manager = TileManager()
             new_tile_manager.split_into_tiles(
                 new_loader.image_data,
@@ -97,29 +111,30 @@ class GLWidget(QOpenGLWidget):
                 progress_callback
             )
 
-            img_w = new_loader.width
-            img_h = new_loader.height
-
-            # Позиционируем новое изображение с небольшим смещением от предыдущего
+            # Позиционирование нового изображения со смещением
+            new_pos = QPointF(0, 0)
             if self.raster_objects:
-                last_pos = self.raster_objects[-1].position
-                new_pos = QPointF(last_pos.x() + 20, last_pos.y() + 20)  # Смещение 20 пикселей
-            else:
-                new_pos = QPointF(0, 0)  # Для первого изображения
+                last_obj = self.raster_objects[-1]
+                new_pos = QPointF(
+                    last_obj.position.x() + 20 / self.zoom,
+                    last_obj.position.y() + 20 / self.zoom
+                )
 
-            # Создаем объект растра с теми же параметрами центра, что и в load_image()
+            # Создание объекта растра с сохранением пути к файлу
             obj = RasterObject(
                 new_tile_manager,
                 new_pos,
-                QSizeF(img_w, img_h)
+                QSizeF(new_loader.width, new_loader.height),
+                file_path  # Добавляем путь к файлу
             )
-            obj.rotation_center = QPointF(img_w / 2, img_h / 2)  # Центр как в load_image()
+            obj.rotation_center = QPointF(new_loader.width / 2, new_loader.height / 2)
+            obj.dpi = (600, 600)
 
             self.raster_objects.append(obj)
 
-            # Если это первое изображение, центрируем камеру
+            # Центрирование камеры для первого изображения
             if len(self.raster_objects) == 1:
-                QTimer.singleShot(0, self.center_camera_on_raster)
+                self.center_camera_on_raster()
 
             self.update()
             return True
@@ -129,40 +144,45 @@ class GLWidget(QOpenGLWidget):
             return False
 
     def load_image(self, file_path, progress_callback=None):
-        # Очищаем предыдущие изображения
-        self.clear_rasters()
+        try:
+            # Проверка существования файла
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"Файл не найден: {file_path}")
 
-        # Создаем новый загрузчик и менеджер тайлов
-        self.image_loader = ImageLoader()
-        self.image_loader.load(file_path)
+            self.clear_rasters()
 
-        self.tile_manager = TileManager()
-        self.tile_manager.split_into_tiles(
-            self.image_loader.image_data,
-            self.image_loader.width,
-            self.image_loader.height,
-            progress_callback
-        )
+            # Загрузка изображения
+            self.image_loader = ImageLoader()
+            self.image_loader.load(file_path, target_dpi=600)
 
-        self.pan = QPoint(0, 0)
-        self.zoom = 1.0
+            # Создание тайлов
+            self.tile_manager = TileManager()
+            self.tile_manager.split_into_tiles(
+                self.image_loader.image_data,
+                self.image_loader.width,
+                self.image_loader.height,
+                progress_callback
+            )
 
-        img_w = self.image_loader.width
-        img_h = self.image_loader.height
+            # Создание основного объекта растра
+            obj = RasterObject(
+                self.tile_manager,
+                QPointF(0, 0),
+                QSizeF(self.image_loader.width, self.image_loader.height),
+                file_path  # Добавляем путь к файлу
+            )
+            obj.rotation_center = QPointF(self.image_loader.width / 2, self.image_loader.height / 2)
+            obj.dpi = (600, 600)
 
-        scene_center_x = (self.width() - img_w * self.zoom) / (2 * self.zoom)
-        scene_center_y = (self.height() - img_h * self.zoom) / (2 * self.zoom)
+            self.raster_objects.append(obj)
+            self.center_camera_on_raster()
+            self.update()
 
-        obj = RasterObject(
-            self.tile_manager,
-            QPointF(0, 0),
-            QSizeF(img_w, img_h)
-        )
-        obj.rotation_center = QPointF(img_w / 2, img_h / 2)
+            return True  # Указываем на успешную загрузку
 
-        self.raster_objects.append(obj)
-        QTimer.singleShot(0, self.center_camera_on_raster)
-        self.update()
+        except Exception as e:
+            print(f"Ошибка при загрузке изображения: {str(e)}")
+            raise  # Пробрасываем исключение для обработки в MainWindow
 
     def clear_rasters(self):
         self.raster_objects = []

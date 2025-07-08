@@ -1,5 +1,6 @@
-# Разбиение изобрaжения на тайлы (части)
+# Разбиение изображения на тайлы (части)
 
+import numpy as np
 from OpenGL.GL import *
 from PyQt5.QtCore import QPointF
 
@@ -15,9 +16,13 @@ class TileManager:
     def __init__(self):
         self.tiles = []
         self.tile_size = 1024
+        self.image_width = 0
+        self.image_height = 0
 
     def split_into_tiles(self, image_data, img_width, img_height, progress_callback=None):
         self.tiles.clear()
+        self.image_width = img_width
+        self.image_height = img_height
         total_tiles = ((img_height + self.tile_size - 1) // self.tile_size) * \
                       ((img_width + self.tile_size - 1) // self.tile_size)
         current_tile = 0
