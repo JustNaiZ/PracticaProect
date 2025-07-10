@@ -21,6 +21,7 @@ class RasterObject:
         self.rotation_center = QPointF(size.width() / 2, size.height() / 2)
         self.dpi = (600, 600)
         self.file_path = file_path  # Сохраняем путь к файлу
+        self.scale_settings = ScaleSettings()  # Добавляем настройки шкалы
 
     def get_physical_size_mm(self): # Просто для вывода размеров изображения
         return QSizeF(
@@ -45,6 +46,18 @@ class RasterObject:
 
         return (0 <= rotated_x <= self.size.width() and 0 <= rotated_y <= self.size.height())
 
+class ScaleSettings:
+    def __init__(self):
+        self.time_visible = False
+        self.amplitude_visible = False
+        self.time_min = 0.0
+        self.time_max = 60.0
+        self.time_step = 10.0
+        self.amplitude_min = 0.0
+        self.amplitude_max = 5.0
+        self.amplitude_step = 0.5
+        self.color = (1.0, 0.0, 0.0, 1.0)
+        self.line_width = 1.0
 
 class GLWidget(QOpenGLWidget):
     objectActivated = pyqtSignal(bool)
@@ -260,6 +273,74 @@ class GLWidget(QOpenGLWidget):
                     glEnd()
 
             glPopMatrix()
+            # Отрисовка шкал поверх изображения
+            self.draw_scales(obj)
+
+    def draw_scales(self, obj):
+        if not obj.scale_settings.time_visible and not obj.scale_settings.amplitude_visible:
+            return
+
+        glPushMatrix()
+        glTranslatef(obj.position.x(), obj.position.y(), 0)
+        glTranslatef(obj.rotation_center.x(), obj.rotation_center.y(), 0)
+        glRotatef(obj.rotation_angle, 0, 0, 1)
+        glTranslatef(-obj.rotation_center.x(), -obj.rotation_center.y(), 0)
+
+        # Устанавливаем параметры линий
+        glColor4f(*obj.scale_settings.color)
+        glLineWidth(obj.scale_settings.line_width)
+
+        # ВРЕМЕННАЯ ШКАЛА (горизонтальные линии)
+        if obj.scale_settings.time_visible and obj.scale_settings.time_max > obj.scale_settings.time_min:
+            time_range = obj.scale_settings.time_max - obj.scale_settings.time_min
+            pixels_per_second = obj.size.height() / time_range
+
+            # Рассчитываем видимый диапазон времени
+            visible_time_min = max(obj.scale_settings.time_min, 0)
+            visible_time_max = min(obj.scale_settings.time_max,
+                                   obj.scale_settings.time_min + obj.size.height() / pixels_per_second)
+
+            # Находим первый и последний шаг, попадающий в видимый диапазон
+            first_step = int(np.ceil((visible_time_min - obj.scale_settings.time_min) / obj.scale_settings.time_step))
+            last_step = int(np.floor((visible_time_max - obj.scale_settings.time_min) / obj.scale_settings.time_step))
+
+            # Рисуем только видимые линии
+            for i in range(first_step, last_step + 1):
+                time = obj.scale_settings.time_min + i * obj.scale_settings.time_step
+                y = (time - obj.scale_settings.time_min) * pixels_per_second
+                if 0 <= y <= obj.size.height():
+                    glBegin(GL_LINES)
+                    glVertex2f(0, y)
+                    glVertex2f(obj.size.width(), y)
+                    glEnd()
+
+        # ШКАЛА АМПЛИТУД (вертикальные линии)
+        if obj.scale_settings.amplitude_visible and obj.scale_settings.amplitude_max > obj.scale_settings.amplitude_min:
+            amp_range = obj.scale_settings.amplitude_max - obj.scale_settings.amplitude_min
+            pixels_per_unit = obj.size.width() / amp_range
+
+            # Рассчитываем видимый диапазон амплитуд
+            visible_amp_min = max(obj.scale_settings.amplitude_min, 0)
+            visible_amp_max = min(obj.scale_settings.amplitude_max,
+                                  obj.scale_settings.amplitude_min + obj.size.width() / pixels_per_unit)
+
+            # Находим первый и последний шаг, попадающий в видимый диапазон
+            first_step = int(
+                np.ceil((visible_amp_min - obj.scale_settings.amplitude_min) / obj.scale_settings.amplitude_step))
+            last_step = int(
+                np.floor((visible_amp_max - obj.scale_settings.amplitude_min) / obj.scale_settings.amplitude_step))
+
+            # Рисуем только видимые линии
+            for i in range(first_step, last_step + 1):
+                amp = obj.scale_settings.amplitude_min + i * obj.scale_settings.amplitude_step
+                x = (amp - obj.scale_settings.amplitude_min) * pixels_per_unit
+                if 0 <= x <= obj.size.width():
+                    glBegin(GL_LINES)
+                    glVertex2f(x, 0)
+                    glVertex2f(x, obj.size.height())
+                    glEnd()
+
+        glPopMatrix()
 
     def mouseDoubleClickEvent(self, event):
         if not self.mode_move and self.selection_mode and event.button() == Qt.LeftButton:

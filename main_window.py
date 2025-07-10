@@ -3,9 +3,128 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QPushButton, QFileDialog, QProgressDialog,
                              QMessageBox, QApplication, QLabel, QFrame, QDialog,
-                             QDialogButtonBox, QDoubleSpinBox)
-
+                             QDialogButtonBox, QDoubleSpinBox, QCheckBox, QFormLayout, QGroupBox)
 from gl_widget import GLWidget
+
+class ScaleSettingsDialog(QDialog):
+    def __init__(self, scale_settings, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Настройка шкалы")
+        self.scale_settings = scale_settings
+
+        layout = QVBoxLayout()
+
+        # Временная шкала
+        time_group = QGroupBox("Временная шкала (горизонтальные линии)")
+        time_layout = QFormLayout()
+
+        self.time_visible = QCheckBox()
+        self.time_visible.setChecked(scale_settings.time_visible)
+        time_layout.addRow("Показывать временную шкалу:", self.time_visible)
+
+        self.time_min = QDoubleSpinBox()
+        self.time_min.setRange(-1e6, 1e6)
+        self.time_min.setValue(scale_settings.time_min)
+        time_layout.addRow("Минимальное время (с):", self.time_min)
+
+        self.time_max = QDoubleSpinBox()
+        self.time_max.setRange(-1e6, 1e6)
+        self.time_max.setValue(scale_settings.time_max)
+        time_layout.addRow("Максимальное время (с):", self.time_max)
+
+        self.time_step = QDoubleSpinBox()
+        self.time_step.setRange(0.001, 1e6)
+        self.time_step.setValue(scale_settings.time_step)
+        time_layout.addRow("Шаг времени (с):", self.time_step)
+
+        time_group.setLayout(time_layout)
+        layout.addWidget(time_group)
+
+        # Шкала амплитуд
+        amp_group = QGroupBox("Шкала амплитуд (вертикальные линии)")
+        amp_layout = QFormLayout()
+
+        self.amp_visible = QCheckBox()
+        self.amp_visible.setChecked(scale_settings.amplitude_visible)
+        amp_layout.addRow("Показывать шкалу амплитуд:", self.amp_visible)
+
+        self.amp_min = QDoubleSpinBox()
+        self.amp_min.setRange(-1e6, 1e6)
+        self.amp_min.setValue(scale_settings.amplitude_min)
+        amp_layout.addRow("Минимальная амплитуда:", self.amp_min)
+
+        self.amp_max = QDoubleSpinBox()
+        self.amp_max.setRange(-1e6, 1e6)
+        self.amp_max.setValue(scale_settings.amplitude_max)
+        amp_layout.addRow("Максимальная амплитуда:", self.amp_max)
+
+        self.amp_step = QDoubleSpinBox()
+        self.amp_step.setRange(0.001, 1e6)
+        self.amp_step.setValue(scale_settings.amplitude_step)
+        amp_layout.addRow("Шаг амплитуды:", self.amp_step)
+
+        amp_group.setLayout(amp_layout)
+        layout.addWidget(amp_group)
+
+        # Кнопки
+        self.buttonBox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttonBox.accepted.connect(self.validate_and_accept)
+        self.buttonBox.rejected.connect(self.reject)
+        layout.addWidget(self.buttonBox)
+
+        self.setLayout(layout)
+
+        # Подключаем сигналы валидации
+        self.time_min.valueChanged.connect(self.validate_values)
+        self.time_max.valueChanged.connect(self.validate_values)
+        self.amp_min.valueChanged.connect(self.validate_values)
+        self.amp_max.valueChanged.connect(self.validate_values)
+
+        # Первоначальная валидация
+        self.validate_values()
+
+    def validate_values(self):
+        """Проверка корректности введенных значений"""
+        time_valid = self.time_max.value() > self.time_min.value()
+        amp_valid = self.amp_max.value() > self.amp_min.value()
+
+        self.buttonBox.button(QDialogButtonBox.Ok).setEnabled(time_valid and amp_valid)
+
+        if not time_valid:
+            self.time_max.setStyleSheet("background-color: #ffdddd;")
+        else:
+            self.time_max.setStyleSheet("")
+
+        if not amp_valid:
+            self.amp_max.setStyleSheet("background-color: #ffdddd;")
+        else:
+            self.amp_max.setStyleSheet("")
+
+    def validate_and_accept(self):
+        """Проверка значений перед принятием"""
+        if self.time_max.value() <= self.time_min.value():
+            QMessageBox.warning(self, "Ошибка", "Максимальное время должно быть больше минимального")
+            return
+
+        if self.amp_max.value() <= self.amp_min.value():
+            QMessageBox.warning(self, "Ошибка", "Максимальная амплитуда должна быть больше минимальной")
+            return
+
+        self.accept()
+
+    def accept(self):
+        """Сохраняем настройки перед закрытием"""
+        self.scale_settings.time_visible = self.time_visible.isChecked()
+        self.scale_settings.time_min = self.time_min.value()
+        self.scale_settings.time_max = self.time_max.value()
+        self.scale_settings.time_step = self.time_step.value()
+
+        self.scale_settings.amplitude_visible = self.amp_visible.isChecked()
+        self.scale_settings.amplitude_min = self.amp_min.value()
+        self.scale_settings.amplitude_max = self.amp_max.value()
+        self.scale_settings.amplitude_step = self.amp_step.value()
+
+        super().accept()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -34,6 +153,17 @@ class MainWindow(QMainWindow):
         self._connect_signals()
 
         self.gl_widget.objectActivated.connect(self._on_object_activated)
+
+        # Меню шкалы (изначально полностью неактивно)
+        self.scale_menu = self.menuBar().addMenu("Шкала")
+        self.scale_settings_action = self.scale_menu.addAction("Настроить шкалу")
+        self.scale_settings_action.triggered.connect(self._show_scale_settings)
+        self.scale_toggle_action = self.scale_menu.addAction("Показать шкалу")
+        self.scale_toggle_action.setEnabled(False)  # Изначально недоступна
+        self.scale_toggle_action.triggered.connect(self._toggle_scale)
+
+        # Делаем все меню изначально недоступным
+        self.scale_menu.setEnabled(False)
 
     def _position_panels(self):
         x = 20
@@ -173,6 +303,35 @@ class MainWindow(QMainWindow):
         self.rotate_right_btn.clicked.connect(lambda: self.gl_widget.rotate(90))
         self.rotate_custom_btn.clicked.connect(self._show_angle_dialog)
 
+    def _show_scale_settings(self):
+        if not hasattr(self.gl_widget, 'active_object') or not self.gl_widget.active_object:
+            QMessageBox.warning(self, "Ошибка",
+                                "Нет активного растрового объекта.\n"
+                                "Дважды кликните по растру, чтобы активировать его.")
+            return
+
+        dialog = ScaleSettingsDialog(self.gl_widget.active_object.scale_settings, self)
+        if dialog.exec_() == QDialog.Accepted:
+            # Только после успешной настройки делаем кнопку доступной
+            self.scale_toggle_action.setEnabled(True)
+            self.gl_widget.update()
+
+    def _toggle_scale(self):
+        if not self.gl_widget.active_object:
+            return
+
+        scale = self.gl_widget.active_object.scale_settings
+        if scale.time_visible or scale.amplitude_visible:
+            scale.time_visible = False
+            scale.amplitude_visible = False
+            self.scale_toggle_action.setText("Показать шкалу")
+        else:
+            scale.time_visible = True
+            scale.amplitude_visible = True
+            self.scale_toggle_action.setText("Убрать шкалу")
+
+        self.gl_widget.update()
+
     def _show_angle_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Точный поворот")
@@ -251,6 +410,11 @@ class MainWindow(QMainWindow):
 
     def _on_object_activated(self, active):
         self.tool_panel.setVisible(active)
+        self.scale_menu.setEnabled(active)
+        if active:
+            # При активации объекта всегда выключаем кнопку показа шкалы
+            self.scale_toggle_action.setEnabled(False)
+            self.scale_toggle_action.setText("Показать шкалу")
 
     def _add_image(self):
         """Добавление нового изображения к текущей сцене"""
@@ -337,6 +501,7 @@ class MainWindow(QMainWindow):
 
             # Активируем интерфейс
             self.add_action.setVisible(True)
+            self.scale_menu.setEnabled(True)
             self.mode_panel.setVisible(True)
             self._activate_move_mode()
 
