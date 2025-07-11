@@ -1,5 +1,6 @@
 # Главное окно приложения
 from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QPixmap, QColor, QIcon
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QPushButton, QFileDialog, QProgressDialog,
                              QMessageBox, QApplication, QLabel, QFrame, QDialog,
@@ -161,9 +162,11 @@ class MainWindow(QMainWindow):
         self.scale_toggle_action = self.scale_menu.addAction("Показать шкалу")
         self.scale_toggle_action.setEnabled(False)  # Изначально недоступна
         self.scale_toggle_action.triggered.connect(self._toggle_scale)
-
-        # Делаем все меню изначально недоступным
         self.scale_menu.setEnabled(False)
+
+        # Меню векторизации (изначально неактивно)
+        self._create_vectorization_menu()
+        self.vectorization_menu.setEnabled(False)
 
     def _position_panels(self):
         x = 20
@@ -272,6 +275,166 @@ class MainWindow(QMainWindow):
         layout.addLayout(buttons_layout)
 
         return panel
+
+    def _create_vectorization_menu(self):
+        """Создание меню векторизации"""
+        self.vectorization_menu = self.menuBar().addMenu("Векторизация")
+
+        self.start_vector_action = self.vectorization_menu.addAction("Начать векторизацию")
+        self.start_vector_action.triggered.connect(self._start_vectorization)
+        self.start_vector_action.setEnabled(False)  # Изначально недоступно
+
+        self.finish_vector_action = self.vectorization_menu.addAction("Завершить векторизацию")
+        self.finish_vector_action.setEnabled(False)
+        self.finish_vector_action.triggered.connect(self._finish_vectorization)
+
+        self.finish_curve_action = self.vectorization_menu.addAction("Завершить текущую кривую")
+        self.finish_curve_action.setEnabled(False)
+        self.finish_curve_action.triggered.connect(self._finish_current_curve)
+
+        self.color_menu = self.vectorization_menu.addMenu("Цвет кривой")
+        self.color_menu.setEnabled(False)
+
+        # Создаем действия для каждого цвета
+        self.color_actions = []
+        colors = [
+            ("Красный", (1.0, 0.0, 0.0, 1.0)),
+            ("Зеленый", (0.0, 1.0, 0.0, 1.0)),
+            ("Синий", (0.0, 0.0, 1.0, 1.0)),
+            ("Пурпурный", (1.0, 0.0, 1.0, 1.0)),
+            ("Желтый", (1.0, 1.0, 0.0, 1.0)),
+            ("Голубой", (0.0, 1.0, 1.0, 1.0)),
+            ("Черный", (0.0, 0.0, 0.0, 1.0))
+        ]
+
+        for name, color in colors:
+            try:
+                action = self.color_menu.addAction(name)
+                action.setCheckable(True)
+
+                # Создаем иконку с цветом
+                pixmap = QPixmap(16, 16)
+                pixmap.fill(QColor(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)))
+                action.setIcon(QIcon(pixmap))
+
+                # Сохраняем цвет в данных действия
+                action.setData(color)
+
+                # Безопасное подключение
+                action.triggered.connect(lambda checked, c=color: self._set_curve_color(c))
+
+                self.color_actions.append(action)
+            except Exception as e:
+                print(f"Ошибка создания цветового действия {name}: {str(e)}")
+
+            # Выбираем первый цвет по умолчанию
+        if self.color_actions:
+            self.color_actions[0].setChecked(True)
+            self._current_color = colors[0][1]
+
+        self.clear_curves_action = self.vectorization_menu.addAction("Очистить все кривые")
+        self.clear_curves_action.setEnabled(False)
+        self.clear_curves_action.triggered.connect(self._clear_all_curves)
+
+    def _start_vectorization(self):
+        if not hasattr(self.gl_widget, 'active_object') or not self.gl_widget.active_object:
+            QMessageBox.warning(self, "Ошибка",
+                                "Нет активного растрового объекта.\n"
+                                "Выберите растр двойным кликом перед началом векторизации.")
+            return
+
+        try:
+            # Проверяем успешность запуска
+            if not self.gl_widget.start_vectorization():
+                raise Exception("Ошибка! Не удалось начать векторизацию!")
+
+            # Обновляем интерфейс
+            self.start_vector_action.setEnabled(False)
+            self.finish_vector_action.setEnabled(True)
+            self.finish_curve_action.setEnabled(True)
+            self.color_menu.setEnabled(True)
+            self.clear_curves_action.setEnabled(True)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка начала векторизации:\n{str(e)}")
+            # Восстанавливаем состояние
+            self.gl_widget.vectorization_mode = False
+            self.gl_widget.setCursor(Qt.ArrowCursor)
+
+    def _finish_vectorization(self):
+        """Завершение режима векторизации"""
+        try:
+            if not hasattr(self.gl_widget, 'finish_vectorization'):
+                return
+
+            # Сохраняем текущее состояние перед завершением
+            had_curve = hasattr(self.gl_widget, 'current_curve') and self.gl_widget.current_curve
+
+            self.gl_widget.finish_vectorization()
+
+            # Обновляем UI только после успешного завершения
+            self.start_vector_action.setEnabled(True)
+            self.finish_vector_action.setEnabled(False)
+            self.finish_curve_action.setEnabled(False)
+            self.color_menu.setEnabled(False)
+            self.clear_curves_action.setEnabled(had_curve)
+
+        except Exception as e:
+            print(f"Критическая ошибка при завершении векторизации: {str(e)}")
+            # Восстанавливаем состояние
+            if hasattr(self.gl_widget, 'vectorization_mode'):
+                self.gl_widget.vectorization_mode = False
+            if hasattr(self.gl_widget, 'current_curve'):
+                self.gl_widget.current_curve = None
+            self.gl_widget.unsetCursor()
+            self.gl_widget.update()
+
+    def _finish_current_curve(self):
+        self.gl_widget.finish_current_curve()
+
+    def _set_curve_color(self, color):
+        """Установка цвета кривой"""
+        if not hasattr(self, '_current_color'):
+            self._current_color = (1.0, 0.0, 0.0, 1.0)  # Красный по умолчанию
+
+        try:
+            # Проверяем корректность цвета
+            if not color or len(color) != 4 or not all(0.0 <= c <= 1.0 for c in color):
+                color = (1.0, 0.0, 0.0, 1.0)  # Красный при ошибке
+
+            self._current_color = color
+
+            # Устанавливаем цвет в виджете
+            if hasattr(self.gl_widget, 'current_color'):
+                self.gl_widget.current_color = color
+
+            # Обновляем текущую кривую, если она есть
+            if (hasattr(self.gl_widget, 'current_curve') and
+                    self.gl_widget.current_curve and
+                    hasattr(self.gl_widget.current_curve, 'color')):
+                self.gl_widget.current_curve.color = color
+
+            # Снимаем выделение с других цветов
+            if hasattr(self, 'color_actions'):
+                for action in self.color_actions:
+                    if hasattr(action, 'isChecked') and hasattr(action, 'setChecked'):
+                        action.setChecked(False)
+                        if hasattr(action, 'data') and action.data() == color:
+                            action.setChecked(True)
+
+            # Обновляем отображение
+            if hasattr(self.gl_widget, 'update'):
+                self.gl_widget.update()
+
+        except Exception as e:
+            print(f"Ошибка установки цвета: {str(e)}")
+            # Пытаемся восстановить работоспособность
+            self._current_color = (1.0, 0.0, 0.0, 1.0)
+            if hasattr(self.gl_widget, 'current_color'):
+                self.gl_widget.current_color = self._current_color
+
+    def _clear_all_curves(self):
+        self.gl_widget.clear_all_curves()
 
     def _panel_style(self):
         return """
@@ -390,6 +553,7 @@ class MainWindow(QMainWindow):
         self.gl_widget.set_selection_enabled(False)  # Отключаем выделение
         self.select_raster_btn.setChecked(False)  # Сбрасываем состояние кнопки
 
+        self.gl_widget.setCursor(Qt.ArrowCursor)
         self.selection_panel.setVisible(False)
 
     def _activate_raster_mode(self):
@@ -410,11 +574,18 @@ class MainWindow(QMainWindow):
 
     def _on_object_activated(self, active):
         self.tool_panel.setVisible(active)
-        self.scale_menu.setEnabled(active)
+        self.scale_menu.setEnabled(active)  # Меню шкалы доступно только при активном растре
+        self.vectorization_menu.setEnabled(active)  # Меню векторизации доступно только при активном растре
+        self.color_menu.setEnabled(active)  # Активируем меню цветов
         if active:
             # При активации объекта всегда выключаем кнопку показа шкалы
             self.scale_toggle_action.setEnabled(False)
             self.scale_toggle_action.setText("Показать шкалу")
+            self.start_vector_action.setEnabled(True)
+        else:
+            # Если объект деактивирован, выключаем режим векторизации
+            if self.gl_widget.vectorization_mode:
+                self._finish_vectorization()
 
     def _add_image(self):
         """Добавление нового изображения к текущей сцене"""
@@ -501,7 +672,8 @@ class MainWindow(QMainWindow):
 
             # Активируем интерфейс
             self.add_action.setVisible(True)
-            self.scale_menu.setEnabled(True)
+            self.scale_menu.setEnabled(False)  # Меню шкалы неактивно
+            self.vectorization_menu.setEnabled(False)  # Меню векторизации неактивно
             self.mode_panel.setVisible(True)
             self._activate_move_mode()
 

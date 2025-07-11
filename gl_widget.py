@@ -1,8 +1,9 @@
 # Виджет OpenGL (масштабирование, перемещение)
 
 import os
+
 from PyQt5.QtWidgets import QOpenGLWidget
-from PyQt5.QtCore import Qt, QPoint, QPointF, QSizeF, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, QPoint, QPointF, QSizeF, pyqtSignal
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from image_loader import ImageLoader
@@ -59,6 +60,14 @@ class ScaleSettings:
         self.color = (1.0, 0.0, 0.0, 1.0)
         self.line_width = 1.0
 
+class VectorCurve:
+    def __init__(self, raster_object, color=(0.0, 1.0, 0.0, 1.0), line_width=2.0):
+        self.points = []  # Точки кривой в локальных координатах растра
+        self.raster_object = raster_object  # Ссылка на растровый объект
+        self.color = color
+        self.line_width = line_width
+        self.completed = False  # Завершена ли кривая
+
 class GLWidget(QOpenGLWidget):
     objectActivated = pyqtSignal(bool)
 
@@ -81,8 +90,94 @@ class GLWidget(QOpenGLWidget):
 
         self.setMouseTracking(True)
 
+        self.vectorization_mode = False
+        self.current_curve = None
+        self.curves = []  # Все кривые
+        self.current_color_index = 0
+        self.current_color = (1.0, 0.0, 0.0, 1.0)  # Красный по умолчанию
+
+    def start_vectorization(self):
+        try:
+            if not self.active_object:
+                return False
+
+            self.vectorization_mode = True
+            self.current_curve = VectorCurve(self.active_object, self.current_color)
+            self.setCursor(Qt.CrossCursor)
+            self.update()
+            return True
+        except Exception as e:
+            print(f"Ошибка! Не удалось начать векторизацию: {str(e)}")
+            return False
+
+    def finish_vectorization(self):
+        """Завершает режим векторизации"""
+        try:
+            self.vectorization_mode = False
+
+            # Безопасное завершение текущей кривой
+            if hasattr(self, 'current_curve') and self.current_curve:
+                if len(self.current_curve.points) > 1:
+                    self.finish_current_curve()
+                else:
+                    # Если точек недостаточно, просто отбрасываем кривую
+                    self.current_curve = None
+
+            # Восстанавливаем курсор
+            try:
+                self.setCursor(Qt.ArrowCursor)
+            except:
+                self.unsetCursor()
+
+            self.update()
+        except Exception as e:
+            print(f"Ошибка при завершении векторизации: {str(e)}")
+            # Принудительное восстановление состояния
+            self.vectorization_mode = False
+            self.current_curve = None
+            self.unsetCursor()
+    def finish_current_curve(self):
+        if self.current_curve and len(self.current_curve.points) > 1:
+            self.current_curve.completed = True
+            self.curves.append(self.current_curve)
+            self.current_curve = None
+            self.update()
+
+    def clear_all_curves(self):
+        if not self.active_object:
+            return
+
+        # Удаляем только кривые, привязанные к активному растру
+        self.curves = [curve for curve in self.curves if curve.raster_object != self.active_object]
+
+        if self.current_curve and self.current_curve.raster_object == self.active_object:
+            self.current_curve = None
+
+        self.update()
+
+    def _scene_to_raster_local(self, scene_point, raster_object):
+        """Преобразует глобальные координаты сцены в локальные координаты растра с учетом поворота"""
+        # Сначала вычитаем позицию растра
+        local_x = scene_point.x() - raster_object.position.x()
+        local_y = scene_point.y() - raster_object.position.y()
+
+        # Затем учитываем поворот
+        dx = local_x - raster_object.rotation_center.x()
+        dy = local_y - raster_object.rotation_center.y()
+
+        angle_rad = -np.radians(raster_object.rotation_angle)
+        cos_val = np.cos(angle_rad)
+        sin_val = np.sin(angle_rad)
+
+        rotated_x = dx * cos_val - dy * sin_val + raster_object.rotation_center.x()
+        rotated_y = dx * sin_val + dy * cos_val + raster_object.rotation_center.y()
+
+        return QPointF(rotated_x, rotated_y)
+
     def set_mode_move(self, enabled: bool):
         self.mode_move = enabled
+        self.vectorization_mode = False  # Выходим из режима векторизации
+        self.setCursor(Qt.ArrowCursor)
         if enabled:
             if self.active_object:
                 self.active_object.is_active = False
@@ -276,6 +371,53 @@ class GLWidget(QOpenGLWidget):
             # Отрисовка шкал поверх изображения
             self.draw_scales(obj)
 
+        # Отрисовка кривых векторизации
+        glDisable(GL_TEXTURE_2D)
+        for curve in self.curves:
+            self._draw_curve(curve)
+
+        if self.current_curve and len(self.current_curve.points) > 0:
+            self._draw_curve(self.current_curve)
+        glEnable(GL_TEXTURE_2D)
+
+    def _draw_curve(self, curve):
+        if not curve or not curve.raster_object:
+            return
+
+        try:
+            # Проверяем корректность цвета
+            if not hasattr(curve, 'color') or len(curve.color) != 4:
+                curve.color = (1.0, 0.0, 0.0, 1.0)  # Красный по умолчанию при ошибке
+
+            glColor4f(*curve.color)
+            glLineWidth(curve.line_width if hasattr(curve, 'line_width') else 2.0)
+
+            glPushMatrix()
+            # Применяем преобразования растра
+            glTranslatef(curve.raster_object.position.x(), curve.raster_object.position.y(), 0)
+            glTranslatef(curve.raster_object.rotation_center.x(), curve.raster_object.rotation_center.y(), 0)
+            glRotatef(curve.raster_object.rotation_angle, 0, 0, 1)
+            glTranslatef(-curve.raster_object.rotation_center.x(), -curve.raster_object.rotation_center.y(), 0)
+
+            if hasattr(curve, 'points') and curve.points:
+                glBegin(GL_LINE_STRIP if len(curve.points) > 1 else GL_POINTS)
+                for point in curve.points:
+                    if isinstance(point, QPointF):
+                        glVertex2f(point.x(), point.y())
+                glEnd()
+
+                # Рисуем точки
+                glPointSize(5.0)
+                glBegin(GL_POINTS)
+                for point in curve.points:
+                    if isinstance(point, QPointF):
+                        glVertex2f(point.x(), point.y())
+                glEnd()
+
+            glPopMatrix()
+        except Exception as e:
+            print(f"Ошибка отрисовки кривой: {str(e)}")
+
     def draw_scales(self, obj):
         if not obj.scale_settings.time_visible and not obj.scale_settings.amplitude_visible:
             return
@@ -354,6 +496,18 @@ class GLWidget(QOpenGLWidget):
                     self.objectActivated.emit(True)
                     self.update()
                     break
+            else:
+                # Если ни один объект не выбран, деактивируем текущий
+                if self.active_object:
+                    self.active_object.is_active = False
+                    self.active_object = None
+                    self.objectActivated.emit(False)
+                    self.update()
+
+        if self.vectorization_mode and event.button() == Qt.LeftButton:
+            self.finish_current_curve()
+        else:
+            super().mouseDoubleClickEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -368,6 +522,22 @@ class GLWidget(QOpenGLWidget):
                     self.dragging = True
                 else:
                     self.dragging = False
+
+        if self.vectorization_mode and event.button() == Qt.LeftButton:
+            if not self.active_object:
+                return
+
+            scene_pos = self.map_to_scene(event.pos())
+            # Преобразуем глобальные координаты в локальные координаты растра
+            local_pos = self._scene_to_raster_local(scene_pos, self.active_object)
+
+            if not self.current_curve:
+                self.current_curve = VectorCurve(self.active_object, self.current_color)
+
+            self.current_curve.points.append(local_pos)
+            self.update()
+        else:
+            super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         scene_pos = self.map_to_scene(event.pos())
