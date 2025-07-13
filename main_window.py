@@ -1,11 +1,15 @@
 # Главное окно приложения
-from PyQt5.QtCore import Qt, QTimer
+
+import os
+from PyQt5.QtCore import Qt, QTimer, QPointF, QPoint
 from PyQt5.QtGui import QPixmap, QColor, QIcon
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QPushButton, QFileDialog, QProgressDialog,
                              QMessageBox, QApplication, QLabel, QFrame, QDialog,
-                             QDialogButtonBox, QDoubleSpinBox, QCheckBox, QFormLayout, QGroupBox)
-from gl_widget import GLWidget
+                             QDialogButtonBox, QDoubleSpinBox, QCheckBox, QFormLayout, QGroupBox, QActionGroup, QAction)
+from PyQt5.QtXml import QDomDocument
+
+from gl_widget import GLWidget, VectorCurve
 
 class ScaleSettingsDialog(QDialog):
     def __init__(self, scale_settings, parent=None):
@@ -127,6 +131,95 @@ class ScaleSettingsDialog(QDialog):
 
         super().accept()
 
+
+class ProjectManager:
+    @staticmethod
+    def save_project(gl_widget, file_path):
+        """Сохраняет проект в XML файл (исправленная версия)"""
+        doc = QDomDocument()
+
+        # Создаем правильный XML-заголовок
+        header = doc.createProcessingInstruction(
+            "xml",
+            'version="1.0" encoding="UTF-8"'
+        )
+        doc.appendChild(header)
+
+        # Корневой элемент
+        root = doc.createElement("seismogram_project")
+        doc.appendChild(root)
+
+        # 1. Сохраняем информацию о программе
+        info = doc.createElement("info")
+        info.appendChild(doc.createTextNode("Проект аналоговых сейсмограмм"))
+        root.appendChild(info)
+
+        # 2. Сохраняем растры
+        rasters = doc.createElement("rasters")
+        root.appendChild(rasters)
+
+        for obj in gl_widget.raster_objects:
+            raster = doc.createElement("raster")
+
+            # Основные атрибуты
+            raster.setAttribute("file_path", obj.file_path)
+            raster.setAttribute("x", str(obj.position.x()))
+            raster.setAttribute("y", str(obj.position.y()))
+            raster.setAttribute("width", str(obj.size.width()))
+            raster.setAttribute("height", str(obj.size.height()))
+            raster.setAttribute("rotation", str(obj.rotation_angle))
+
+            # Настройки шкалы
+            scale = doc.createElement("scale_settings")
+            scale.setAttribute("time_visible", str(int(obj.scale_settings.time_visible)))
+            scale.setAttribute("amplitude_visible", str(int(obj.scale_settings.amplitude_visible)))
+            scale.setAttribute("time_min", str(obj.scale_settings.time_min))
+            scale.setAttribute("time_max", str(obj.scale_settings.time_max))
+            scale.setAttribute("time_step", str(obj.scale_settings.time_step))
+            scale.setAttribute("amplitude_min", str(obj.scale_settings.amplitude_min))
+            scale.setAttribute("amplitude_max", str(obj.scale_settings.amplitude_max))
+            scale.setAttribute("amplitude_step", str(obj.scale_settings.amplitude_step))
+            raster.appendChild(scale)
+
+            rasters.appendChild(raster)
+
+        # 3. Сохраняем кривые
+        if hasattr(gl_widget, 'curves') and gl_widget.curves:
+            curves = doc.createElement("curves")
+            root.appendChild(curves)
+
+            for curve in gl_widget.curves:
+                curve_elem = doc.createElement("curve")
+                curve_elem.setAttribute("raster_index", str(gl_widget.raster_objects.index(curve.raster_object)))
+                curve_elem.setAttribute("color_r", str(curve.color[0]))
+                curve_elem.setAttribute("color_g", str(curve.color[1]))
+                curve_elem.setAttribute("color_b", str(curve.color[2]))
+                curve_elem.setAttribute("color_a", str(curve.color[3]))
+                curve_elem.setAttribute("line_width", str(curve.line_width))
+
+                points = doc.createElement("points")
+                for point in curve.points:
+                    point_elem = doc.createElement("point")
+                    point_elem.setAttribute("x", str(point.x()))
+                    point_elem.setAttribute("y", str(point.y()))
+                    points.appendChild(point_elem)
+
+                curve_elem.appendChild(points)
+                curves.appendChild(curve_elem)
+
+        # 4. Сохраняем настройки вида
+        view = doc.createElement("view")
+        view.setAttribute("zoom", str(gl_widget.zoom))
+        view.setAttribute("pan_x", str(gl_widget.pan.x()))
+        view.setAttribute("pan_y", str(gl_widget.pan.y()))
+        root.appendChild(view)
+
+        # Записываем в файл как чистый XML
+        with open(file_path, 'w', encoding='utf-8') as f:
+            # Используем toByteArray для корректного сохранения
+            xml_data = doc.toByteArray(4)  # 4 - это отступ
+            f.write(xml_data.data().decode('utf-8'))
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -168,6 +261,41 @@ class MainWindow(QMainWindow):
         self._create_vectorization_menu()
         self.vectorization_menu.setEnabled(False)
 
+        self.gl_widget.curvesChanged.connect(self._update_save_button_state)
+        self.curves_actions_created = False  # Флаг, созданы ли уже действия
+
+    def _update_save_button_state(self, has_curves):
+        """Обновляет состояние кнопки сохранения"""
+        if hasattr(self, 'save_curves_action'):
+            # Проверяем, что есть хотя бы одна кривая с минимум 2 точками
+            valid_curves = has_curves and any(
+                len(c.points) >= 2
+                for c in (self.gl_widget.curves if hasattr(self.gl_widget, 'curves') else [])
+            )
+            self.save_curves_action.setEnabled(valid_curves)
+
+    def _save_project(self):
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить проект как XML",
+            "",
+            "XML Files (*.xml);;All Files (*)"
+        )
+
+        if not file_path:
+            return
+
+        # Добавляем расширение .xml если его нет
+        if not file_path.lower().endswith('.xml'):
+            file_path += '.xml'
+
+        try:
+            ProjectManager.save_project(self.gl_widget, file_path)
+            self.show_toast(f"Проект сохранен в {file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка сохранения",
+                                 f"Не удалось сохранить проект:\n{str(e)}")
+
     def _position_panels(self):
         x = 20
         y = 20
@@ -180,13 +308,20 @@ class MainWindow(QMainWindow):
 
     def _create_menu(self):
         menubar = self.menuBar()
-        file_menu = menubar.addMenu("Файл")
-        open_action = file_menu.addAction("Открыть изображение")
+        self.file_menu = menubar.addMenu("Файл")  # Сохраняем ссылку на меню
+
+        open_action = self.file_menu.addAction("Открыть изображение")
         open_action.triggered.connect(self._open_image)
 
-        self.add_action = file_menu.addAction("Добавить изображение")
+        self.add_action = self.file_menu.addAction("Добавить изображение")
         self.add_action.setVisible(False)
         self.add_action.triggered.connect(self._add_image)
+
+        self.file_menu.addSeparator()
+
+        self.save_project_action = self.file_menu.addAction("Сохранить проект...")
+        self.save_project_action.setVisible(False)
+        self.save_project_action.triggered.connect(self._save_project)
 
     def _create_mode_panel(self):
         panel = QWidget(self)
@@ -295,8 +430,10 @@ class MainWindow(QMainWindow):
         self.color_menu = self.vectorization_menu.addMenu("Цвет кривой")
         self.color_menu.setEnabled(False)
 
-        # Создаем действия для каждого цвета
-        self.color_actions = []
+        # Создаем группу действий для эксклюзивного выбора
+        self.color_action_group = QActionGroup(self)
+        self.color_action_group.setExclusive(True)  # Только один выбранный цвет
+
         colors = [
             ("Красный", (1.0, 0.0, 0.0, 1.0)),
             ("Зеленый", (0.0, 1.0, 0.0, 1.0)),
@@ -308,33 +445,62 @@ class MainWindow(QMainWindow):
         ]
 
         for name, color in colors:
-            try:
-                action = self.color_menu.addAction(name)
-                action.setCheckable(True)
+            action = QAction(name, self)
+            action.setCheckable(True)
 
-                # Создаем иконку с цветом
-                pixmap = QPixmap(16, 16)
-                pixmap.fill(QColor(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)))
-                action.setIcon(QIcon(pixmap))
+            # Создаем цветную иконку
+            pixmap = QPixmap(16, 16)
+            pixmap.fill(QColor(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)))
+            action.setIcon(QIcon(pixmap))
 
-                # Сохраняем цвет в данных действия
-                action.setData(color)
+            action.setData(color)
+            self.color_action_group.addAction(action)
+            self.color_menu.addAction(action)
 
-                # Безопасное подключение
-                action.triggered.connect(lambda checked, c=color: self._set_curve_color(c))
+            # Подключаем сигнал
+            action.triggered.connect(lambda checked, c=color: self._set_curve_color(c))
 
-                self.color_actions.append(action)
-            except Exception as e:
-                print(f"Ошибка создания цветового действия {name}: {str(e)}")
-
-            # Выбираем первый цвет по умолчанию
-        if self.color_actions:
-            self.color_actions[0].setChecked(True)
+        # Устанавливаем красный цвет по умолчанию (с галочкой)
+        if self.color_action_group.actions():
+            self.color_action_group.actions()[0].setChecked(True)
             self._current_color = colors[0][1]
+
+        self.clear_last_curve_action = self.vectorization_menu.addAction("Очистить предыдущую кривую")
+        self.clear_last_curve_action.setEnabled(False)
+        self.clear_last_curve_action.triggered.connect(self._clear_last_curve)
 
         self.clear_curves_action = self.vectorization_menu.addAction("Очистить все кривые")
         self.clear_curves_action.setEnabled(False)
         self.clear_curves_action.triggered.connect(self._clear_all_curves)
+
+    def _create_curves_actions(self):
+        """Создает действия для работы с кривыми при первом использовании"""
+        if not self.curves_actions_created:
+            self.save_curves_action = QAction("Сохранить кривые...", self)
+            self.save_curves_action.triggered.connect(self._save_curves)
+            self.save_curves_action.setEnabled(False)
+
+            self.load_curves_action = QAction("Загрузить кривые...", self)
+            self.load_curves_action.triggered.connect(self._load_curves)
+            self.load_curves_action.setEnabled(False)
+
+            self.curves_actions_created = True
+
+    def _update_curves_actions_visibility(self, visible):
+        """Управляет видимостью действий для кривых"""
+        self._create_curves_actions()  # Убедимся, что действия созданы
+
+        # Удаляем старые действия если они есть
+        if self.save_curves_action in self.file_menu.actions():
+            self.file_menu.removeAction(self.save_curves_action)
+        if self.load_curves_action in self.file_menu.actions():
+            self.file_menu.removeAction(self.load_curves_action)
+
+        if visible:
+            # Добавляем разделитель и действия
+            self.file_menu.addSeparator()
+            self.file_menu.addAction(self.save_curves_action)
+            self.file_menu.addAction(self.load_curves_action)
 
     def _start_vectorization(self):
         if not hasattr(self.gl_widget, 'active_object') or not self.gl_widget.active_object:
@@ -344,97 +510,142 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            # Проверяем успешность запуска
             if not self.gl_widget.start_vectorization():
                 raise Exception("Ошибка! Не удалось начать векторизацию!")
 
-            # Обновляем интерфейс
+            # Включаем все кнопки кроме "Начать векторизацию"
             self.start_vector_action.setEnabled(False)
             self.finish_vector_action.setEnabled(True)
             self.finish_curve_action.setEnabled(True)
             self.color_menu.setEnabled(True)
-            self.clear_curves_action.setEnabled(True)
+            self.clear_last_curve_action.setEnabled(True)  # Всегда доступна при векторизации
+            self.clear_curves_action.setEnabled(True)  # Всегда доступна при векторизации
 
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка начала векторизации:\n{str(e)}")
-            # Восстанавливаем состояние
             self.gl_widget.vectorization_mode = False
             self.gl_widget.setCursor(Qt.ArrowCursor)
 
     def _finish_vectorization(self):
-        """Завершение режима векторизации"""
+        """Завершение режима векторизации и сброс состояния кнопок"""
         try:
-            if not hasattr(self.gl_widget, 'finish_vectorization'):
-                return
+            # Завершаем векторизацию в виджете
+            if not self.gl_widget.finish_vectorization():
+                QMessageBox.warning(self, "Предупреждение", "Не удалось корректно завершить векторизацию")
 
-            # Сохраняем текущее состояние перед завершением
-            had_curve = hasattr(self.gl_widget, 'current_curve') and self.gl_widget.current_curve
-
-            self.gl_widget.finish_vectorization()
-
-            # Обновляем UI только после успешного завершения
-            self.start_vector_action.setEnabled(True)
+            # Сбрасываем состояние UI
+            self.start_vector_action.setEnabled(True)  # Можно начать снова
             self.finish_vector_action.setEnabled(False)
             self.finish_curve_action.setEnabled(False)
-            self.color_menu.setEnabled(False)
-            self.clear_curves_action.setEnabled(had_curve)
+            self.clear_last_curve_action.setEnabled(False)
+            self.clear_curves_action.setEnabled(False)
+            # Цвет остается доступным всегда
 
         except Exception as e:
-            print(f"Критическая ошибка при завершении векторизации: {str(e)}")
-            # Восстанавливаем состояние
-            if hasattr(self.gl_widget, 'vectorization_mode'):
-                self.gl_widget.vectorization_mode = False
-            if hasattr(self.gl_widget, 'current_curve'):
-                self.gl_widget.current_curve = None
-            self.gl_widget.unsetCursor()
-            self.gl_widget.update()
+            QMessageBox.critical(self, "Ошибка",
+                                 f"Критическая ошибка при завершении векторизации:\n{str(e)}")
 
     def _finish_current_curve(self):
-        self.gl_widget.finish_current_curve()
+        """Завершение текущей кривой"""
+        if not hasattr(self.gl_widget, 'finish_current_curve'):
+            QMessageBox.warning(self, "Ошибка", "Функция завершения кривой недоступна")
+            return
+
+        success = self.gl_widget.finish_current_curve()
+
+        if not success:
+            QMessageBox.warning(self, "Ошибка",
+                                "Не удалось завершить кривую.\n"
+                                "Убедитесь, что кривая содержит хотя бы 2 точки")
 
     def _set_curve_color(self, color):
         """Установка цвета кривой"""
-        if not hasattr(self, '_current_color'):
-            self._current_color = (1.0, 0.0, 0.0, 1.0)  # Красный по умолчанию
-
         try:
             # Проверяем корректность цвета
-            if not color or len(color) != 4 or not all(0.0 <= c <= 1.0 for c in color):
-                color = (1.0, 0.0, 0.0, 1.0)  # Красный при ошибке
+            if not color or len(color) != 4:
+                color = (1.0, 0.0, 0.0, 1.0)  # Красный по умолчанию при ошибке
 
             self._current_color = color
 
-            # Устанавливаем цвет в виджете
+            # Обновляем цвет в виджете OpenGL
             if hasattr(self.gl_widget, 'current_color'):
                 self.gl_widget.current_color = color
 
-            # Обновляем текущую кривую, если она есть
-            if (hasattr(self.gl_widget, 'current_curve') and
-                    self.gl_widget.current_curve and
-                    hasattr(self.gl_widget.current_curve, 'color')):
+            # Обновляем текущую кривую
+            if hasattr(self.gl_widget, 'current_curve') and self.gl_widget.current_curve:
                 self.gl_widget.current_curve.color = color
 
-            # Снимаем выделение с других цветов
-            if hasattr(self, 'color_actions'):
-                for action in self.color_actions:
-                    if hasattr(action, 'isChecked') and hasattr(action, 'setChecked'):
-                        action.setChecked(False)
-                        if hasattr(action, 'data') and action.data() == color:
-                            action.setChecked(True)
-
-            # Обновляем отображение
-            if hasattr(self.gl_widget, 'update'):
-                self.gl_widget.update()
+            self.gl_widget.update()
 
         except Exception as e:
             print(f"Ошибка установки цвета: {str(e)}")
-            # Пытаемся восстановить работоспособность
-            self._current_color = (1.0, 0.0, 0.0, 1.0)
-            if hasattr(self.gl_widget, 'current_color'):
-                self.gl_widget.current_color = self._current_color
+            # Восстанавливаем красный цвет
+            self._set_curve_color((1.0, 0.0, 0.0, 1.0))
+
+    def _clear_last_curve(self):
+        """Обработчик с гарантированным обновлением"""
+        try:
+            before_count = len(self.gl_widget.curves)
+            success = self.gl_widget.clear_last_curve()
+
+            if not success and len(self.gl_widget.curves) == before_count:
+                QMessageBox.warning(self, "Ошибка", "Кривая не удалилась")
+            else:
+                # Принудительное обновление, даже если не было изменений
+                self.gl_widget.update()
+
+        except Exception as e:
+            print(f"Ошибка: {e}")
 
     def _clear_all_curves(self):
-        self.gl_widget.clear_all_curves()
+        """Обработчик с гарантированным обновлением"""
+        try:
+            success = self.gl_widget.clear_all_curves()
+
+            if not success and self.gl_widget.curves:
+                QMessageBox.warning(self, "Ошибка", "Кривые не очистились")
+            else:
+                # Всегда обновляем виджет
+                self.gl_widget.update()
+
+        except Exception as e:
+            print(f"Ошибка: {e}")
+
+    def _save_curves(self):
+        if not hasattr(self.gl_widget, 'curves') or not self.gl_widget.curves:
+            QMessageBox.warning(self, "Ошибка", "Нет кривых для сохранения")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Сохранить кривые", "", "Text Files (*.txt)"
+        )
+
+        if file_path:
+            if not file_path.endswith('.txt'):
+                file_path += '.txt'
+
+            if self.gl_widget.save_curves_to_file(file_path):
+                self.show_toast("Кривые успешно сохранены")
+            else:
+                QMessageBox.warning(self, "Ошибка", "Не удалось сохранить кривые")
+
+    def _load_curves(self):
+        if not hasattr(self.gl_widget, 'active_object') or not self.gl_widget.active_object:
+            QMessageBox.warning(self, "Ошибка", "Сначала активируйте растр")
+            return
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Загрузить кривые", "", "Text Files (*.txt)"
+        )
+
+        if file_path:
+            try:
+                if self.gl_widget.load_curves_from_file(file_path):
+                    self.show_toast("Кривые успешно загружены")
+                    # Обновляем состояние кнопки сохранения
+                    self.save_curves_action.setEnabled(True)
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка", str(e))
 
     def _panel_style(self):
         return """
@@ -577,7 +788,11 @@ class MainWindow(QMainWindow):
         self.scale_menu.setEnabled(active)  # Меню шкалы доступно только при активном растре
         self.vectorization_menu.setEnabled(active)  # Меню векторизации доступно только при активном растре
         self.color_menu.setEnabled(active)  # Активируем меню цветов
+        self._update_curves_actions_visibility(active) # Обновляем видимость действий для кривых
         if active:
+            has_curves = hasattr(self.gl_widget, 'curves') and bool(self.gl_widget.curves)
+            self.save_curves_action.setEnabled(has_curves)
+            self.load_curves_action.setEnabled(True)
             # При активации объекта всегда выключаем кнопку показа шкалы
             self.scale_toggle_action.setEnabled(False)
             self.scale_toggle_action.setText("Показать шкалу")
@@ -586,6 +801,8 @@ class MainWindow(QMainWindow):
             # Если объект деактивирован, выключаем режим векторизации
             if self.gl_widget.vectorization_mode:
                 self._finish_vectorization()
+        if active and hasattr(self.gl_widget, 'curves'):
+            self._update_save_button_state(bool(self.gl_widget.curves))
 
     def _add_image(self):
         """Добавление нового изображения к текущей сцене"""
@@ -623,6 +840,7 @@ class MainWindow(QMainWindow):
                     )
                 except (IndexError, AttributeError, RuntimeError) as e:
                     print(f"Ошибка при показе уведомления: {str(e)}")
+            self.save_project_action.setVisible(True)
 
         except Exception as e:
             # Сначала скрываем прогресс-диалог, если он есть
@@ -671,7 +889,9 @@ class MainWindow(QMainWindow):
                 print(f"Ошибка при формировании информации: {str(e)}")
 
             # Активируем интерфейс
+            self._update_curves_actions_visibility(True)
             self.add_action.setVisible(True)
+            self.save_project_action.setVisible(True)
             self.scale_menu.setEnabled(False)  # Меню шкалы неактивно
             self.vectorization_menu.setEnabled(False)  # Меню векторизации неактивно
             self.mode_panel.setVisible(True)

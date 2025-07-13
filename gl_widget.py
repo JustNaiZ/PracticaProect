@@ -1,7 +1,6 @@
 # Виджет OpenGL (масштабирование, перемещение)
 
 import os
-
 from PyQt5.QtWidgets import QOpenGLWidget
 from PyQt5.QtCore import Qt, QPoint, QPointF, QSizeF, pyqtSignal
 from OpenGL.GL import *
@@ -70,6 +69,7 @@ class VectorCurve:
 
 class GLWidget(QOpenGLWidget):
     objectActivated = pyqtSignal(bool)
+    curvesChanged = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -96,12 +96,19 @@ class GLWidget(QOpenGLWidget):
         self.current_color_index = 0
         self.current_color = (1.0, 0.0, 0.0, 1.0)  # Красный по умолчанию
 
+        self.hovered_scale_line = None  # Какая линия шкалы под курсором
+        self.dragging_scale_line = None  # Какую линию шкалы перемещаем
+        self.scale_line_tooltip = ""  # Текст подсказки для линии
+
+
     def start_vectorization(self):
         try:
             if not self.active_object:
                 return False
 
             self.vectorization_mode = True
+            if not hasattr(self, 'curves'):
+                self.curves = []
             self.current_curve = VectorCurve(self.active_object, self.current_color)
             self.setCursor(Qt.CrossCursor)
             self.update()
@@ -111,49 +118,74 @@ class GLWidget(QOpenGLWidget):
             return False
 
     def finish_vectorization(self):
-        """Завершает режим векторизации"""
+        """Завершение режима векторизации с очисткой"""
         try:
-            self.vectorization_mode = False
-
-            # Безопасное завершение текущей кривой
+            # Завершаем текущую кривую, если она есть
             if hasattr(self, 'current_curve') and self.current_curve:
-                if len(self.current_curve.points) > 1:
+                if len(self.current_curve.points) >= 2:
                     self.finish_current_curve()
-                else:
-                    # Если точек недостаточно, просто отбрасываем кривую
-                    self.current_curve = None
+                self.current_curve = None
 
-            # Восстанавливаем курсор
-            try:
-                self.setCursor(Qt.ArrowCursor)
-            except:
-                self.unsetCursor()
-
-            self.update()
-        except Exception as e:
-            print(f"Ошибка при завершении векторизации: {str(e)}")
-            # Принудительное восстановление состояния
             self.vectorization_mode = False
-            self.current_curve = None
-            self.unsetCursor()
-    def finish_current_curve(self):
-        if self.current_curve and len(self.current_curve.points) > 1:
-            self.current_curve.completed = True
-            self.curves.append(self.current_curve)
-            self.current_curve = None
+            self.setCursor(Qt.ArrowCursor)
             self.update()
+            return True
+
+        except Exception as e:
+            print(f"Ошибка завершения векторизации: {str(e)}")
+            self.vectorization_mode = False
+            return False
+
+    def finish_current_curve(self):
+        if not self.current_curve or len(self.current_curve.points) < 2:
+            return False
+
+        completed_curve = VectorCurve(
+            self.current_curve.raster_object,
+            self.current_curve.color,
+            self.current_curve.line_width
+        )
+        completed_curve.points = self.current_curve.points.copy()
+        completed_curve.completed = True
+
+        if not hasattr(self, 'curves'):
+            self.curves = []
+        self.curves.append(completed_curve)
+        self.current_curve = None
+
+        # Уведомляем об изменении
+        if hasattr(self.parent(), 'curves_changed'):
+            self.parent().curves_changed(True)
+
+        self._notify_curves_changed()
+        self.update()
+        return True
+
+    def clear_last_curve(self):
+        """Удаляет последнюю кривую без лишних проверок"""
+        try:
+            if not self.curves:  # Простая проверка на пустоту
+                return True  # Успех, даже если нечего удалять
+
+            self.curves.pop()
+            self._notify_curves_changed()
+            self.update()
+            return True
+        except Exception as e:
+            print(f"Реальная ошибка при удалении: {e}")
+            return False
 
     def clear_all_curves(self):
-        if not self.active_object:
-            return
-
-        # Удаляем только кривые, привязанные к активному растру
-        self.curves = [curve for curve in self.curves if curve.raster_object != self.active_object]
-
-        if self.current_curve and self.current_curve.raster_object == self.active_object:
+        """Очищает все кривые гарантированно"""
+        try:
+            self.curves = []
             self.current_curve = None
-
-        self.update()
+            self._notify_curves_changed()
+            self.update()
+            return True
+        except Exception as e:
+            print(f"Реальная ошибка при очистке: {e}")
+            return False
 
     def _scene_to_raster_local(self, scene_point, raster_object):
         """Преобразует глобальные координаты сцены в локальные координаты растра с учетом поворота"""
@@ -381,16 +413,17 @@ class GLWidget(QOpenGLWidget):
         glEnable(GL_TEXTURE_2D)
 
     def _draw_curve(self, curve):
-        if not curve or not curve.raster_object:
+        if not curve or not hasattr(curve, 'points') or not curve.raster_object:
             return
 
         try:
             # Проверяем корректность цвета
-            if not hasattr(curve, 'color') or len(curve.color) != 4:
-                curve.color = (1.0, 0.0, 0.0, 1.0)  # Красный по умолчанию при ошибке
+            color = getattr(curve, 'color', (1.0, 0.0, 0.0, 1.0))
+            if not isinstance(color, (tuple, list)) or len(color) != 4:
+                color = (1.0, 0.0, 0.0, 1.0)
 
-            glColor4f(*curve.color)
-            glLineWidth(curve.line_width if hasattr(curve, 'line_width') else 2.0)
+            glColor4f(*color)
+            glLineWidth(getattr(curve, 'line_width', 2.0))
 
             glPushMatrix()
             # Применяем преобразования растра
@@ -399,20 +432,21 @@ class GLWidget(QOpenGLWidget):
             glRotatef(curve.raster_object.rotation_angle, 0, 0, 1)
             glTranslatef(-curve.raster_object.rotation_center.x(), -curve.raster_object.rotation_center.y(), 0)
 
-            if hasattr(curve, 'points') and curve.points:
-                glBegin(GL_LINE_STRIP if len(curve.points) > 1 else GL_POINTS)
+            # Рисуем линии
+            if len(curve.points) > 1:
+                glBegin(GL_LINE_STRIP)
                 for point in curve.points:
                     if isinstance(point, QPointF):
                         glVertex2f(point.x(), point.y())
                 glEnd()
 
-                # Рисуем точки
-                glPointSize(5.0)
-                glBegin(GL_POINTS)
-                for point in curve.points:
-                    if isinstance(point, QPointF):
-                        glVertex2f(point.x(), point.y())
-                glEnd()
+            # Рисуем точки
+            glPointSize(5.0)
+            glBegin(GL_POINTS)
+            for point in curve.points:
+                if isinstance(point, QPointF):
+                    glVertex2f(point.x(), point.y())
+            glEnd()
 
             glPopMatrix()
         except Exception as e:
@@ -484,6 +518,135 @@ class GLWidget(QOpenGLWidget):
 
         glPopMatrix()
 
+    def _notify_curves_changed(self):
+        """Уведомляет об изменении состояния кривых"""
+        has_curves = (hasattr(self, 'curves') and bool(self.curves)) or \
+                     (hasattr(self, 'current_curve') and self.current_curve and len(self.current_curve.points) > 0)
+        self.curvesChanged.emit(has_curves)
+
+    def save_curves_to_file(self, file_path):
+        """Сохраняет кривые с проверкой формата точек"""
+        if not hasattr(self, 'curves') or not self.curves:
+            return False
+
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                # Информация о растре
+                if self.raster_objects:
+                    obj = self.raster_objects[0]
+                    f.write("[raster]\n")
+                    f.write(f"file_path={os.path.basename(obj.file_path)}\n")
+                    f.write(f"width={obj.size.width()}\n")
+                    f.write(f"height={obj.size.height()}\n\n")
+
+                # Сохраняем каждую кривую
+                for i, curve in enumerate(self.curves):
+                    f.write(f"[curve_{i}]\n")
+                    f.write(f"color={','.join(map(str, curve.color))}\n")
+                    f.write(f"width={curve.line_width}\n")
+
+                    # Проверяем и сохраняем точки
+                    if not hasattr(curve, 'points') or not curve.points:
+                        continue
+
+                    points_str = []
+                    for point in curve.points:
+                        # Проверяем, что точка - это QPointF или аналогичный объект
+                        if hasattr(point, 'x') and hasattr(point, 'y'):
+                            points_str.append(f"{point.x():.2f},{point.y():.2f}")
+                        elif isinstance(point, (tuple, list)) and len(point) >= 2:
+                            points_str.append(f"{point[0]:.2f},{point[1]:.2f}")
+
+                    f.write(f"points={';'.join(points_str)}\n\n")
+
+            return True
+        except Exception as e:
+            print(f"Ошибка сохранения: {str(e)}")
+            return False
+
+    def load_curves_from_file(self, file_path):
+        """Загружает кривые из файла с проверкой соответствия файла растра"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # Проверяем, есть ли активный растр
+            if not self.active_object:
+                raise ValueError("Нет активного растрового объекта")
+
+            # Разбираем информацию о растре из файла
+            raster_section = content.split('[raster]')[1].split('[curve]')[0]
+            raster_info = {}
+            for line in raster_section.split('\n'):
+                if '=' in line:
+                    key, value = line.strip().split('=', 1)
+                    raster_info[key] = value
+
+            # Проверяем соответствие файлов
+            saved_filename = raster_info.get('file_path', '')
+            current_filename = os.path.basename(self.active_object.file_path)
+
+            if saved_filename != current_filename:
+                raise ValueError(
+                    f"Файл кривых не соответствует текущему растру.\n"
+                    f"Сохранено для: {saved_filename}\n"
+                    f"Текущий растр: {current_filename}"
+                )
+
+            # Очищаем текущие кривые
+            self.curves = []
+
+            # Загружаем кривые из файла
+            curve_sections = [s for s in content.split('[curve_') if s.strip()]  # Все секции кривых
+            for section in curve_sections[1:]:  # Пропускаем первый элемент (он может быть пустым)
+                try:
+                    # Разбираем параметры кривой
+                    header_end = section.find(']')
+                    curve_data = {}
+                    lines = section[header_end + 1:].split('\n')
+
+                    for line in lines:
+                        if '=' in line:
+                            key, value = line.strip().split('=', 1)
+                            curve_data[key.strip()] = value.strip()
+
+                    # Создаем новую кривую
+                    color = tuple(map(float, curve_data.get('color', '1.0,0.0,0.0,1.0').split(',')))
+                    width = float(curve_data.get('width', '2.0'))
+                    curve = VectorCurve(self.active_object, color, width)
+
+                    # Загружаем точки
+                    points_str = curve_data.get('points', '')
+                    if points_str:
+                        for pair in points_str.split(';'):
+                            if ',' in pair:
+                                try:
+                                    x, y = map(float, pair.split(','))
+                                    # Добавляем точку в локальных координатах растра
+                                    curve.points.append(QPointF(x, y))
+                                except ValueError:
+                                    continue
+
+                    if len(curve.points) >= 2:  # Добавляем только кривые с достаточным количеством точек
+                        curve.completed = True
+                        self.curves.append(curve)
+
+                except Exception as e:
+                    print(f"Ошибка загрузки кривой: {str(e)}")
+                    continue
+
+            # Убедимся, что кривые есть перед обновлением
+            if self.curves:
+                self._notify_curves_changed()
+                self.update()
+                return True
+            else:
+                raise ValueError("Не удалось загрузить ни одной кривой")
+
+        except Exception as e:
+            print(f"Ошибка загрузки кривых: {str(e)}")
+            raise
+
     def mouseDoubleClickEvent(self, event):
         if not self.mode_move and self.selection_mode and event.button() == Qt.LeftButton:
             scene_pos = self.map_to_scene(event.pos())
@@ -510,6 +673,24 @@ class GLWidget(QOpenGLWidget):
             super().mouseDoubleClickEvent(event)
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.vectorization_mode:
+            try:
+                scene_pos = self.map_to_scene(event.pos())
+                local_pos = self._scene_to_raster_local(scene_pos, self.active_object)
+
+                if not self.current_curve:
+                    self.current_curve = VectorCurve(self.active_object, self.current_color)
+
+                self.current_curve.points.append(local_pos)
+                self.update()
+
+                # Уведомляем об изменении кривых
+                if hasattr(self.parent(), 'curves_changed'):
+                    self.parent().curves_changed(bool(self.curves) or
+                                                 (self.current_curve and len(self.current_curve.points) > 0))
+            except Exception as e:
+                print(f"Ошибка при добавлении точки: {str(e)}")
+
         if event.button() == Qt.LeftButton:
             self.last_pos = event.pos()
             scene_pos = self.map_to_scene(event.pos())
@@ -518,26 +699,25 @@ class GLWidget(QOpenGLWidget):
                 self.dragging = True
             else:
                 # Режим работы с растром: можно двигать активный объект
-                if self.active_object and self.active_object.contains_point(scene_pos):
-                    self.dragging = True
-                else:
-                    self.dragging = False
+                self.dragging = bool(self.active_object and self.active_object.contains_point(scene_pos))
 
-        if self.vectorization_mode and event.button() == Qt.LeftButton:
-            if not self.active_object:
+            # Обработка векторизации
+            if self.vectorization_mode and self.active_object:
+                try:
+                    scene_pos = self.map_to_scene(event.pos())
+                    local_pos = self._scene_to_raster_local(scene_pos, self.active_object)
+
+                    if not self.current_curve:
+                        self.current_curve = VectorCurve(self.active_object, self.current_color)
+
+                    self.current_curve.points.append(local_pos)
+                    self._notify_curves_changed()
+                    self.update()
+                except Exception as e:
+                    print(f"Ошибка при добавлении точки векторизации: {str(e)}")
                 return
 
-            scene_pos = self.map_to_scene(event.pos())
-            # Преобразуем глобальные координаты в локальные координаты растра
-            local_pos = self._scene_to_raster_local(scene_pos, self.active_object)
-
-            if not self.current_curve:
-                self.current_curve = VectorCurve(self.active_object, self.current_color)
-
-            self.current_curve.points.append(local_pos)
-            self.update()
-        else:
-            super().mousePressEvent(event)
+        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         scene_pos = self.map_to_scene(event.pos())
